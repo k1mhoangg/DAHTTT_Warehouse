@@ -1,0 +1,88 @@
+,,,,,,,,,,,
+Tên Use Case,Quản lý danh mục sản phẩm,Đặt hàng từ nhà cung cấp,Nhập kho,Xuất kho,Chuyển kho,Kiểm kho,Điều chỉnh kho,Thống kê & Báo cáo,Hủy hàng,Trả hàng,Mua hàng
+Mã Use Case,UC01,UC02,UC03,UC04,UC05,UC06,UC07,UC08,UC09,UC10,UC11
+Tác nhân,Quản lý kho,Nhân viên kho,Nhân viên kho,Nhân viên kho,Nhân viên kho,Nhân viên kho,Nhân viên kho,"Quản lý kho, Thu ngân",Nhân viên kho,"Nhân viên kho, Thu ngân, Khách hàng","Khách hàng, Thu ngân"
+Mô tả,"Quản lý thông tin chi tiết các sản phẩm trong hệ thống.
+Mỗi sản phẩm đều được quản lí theo lô.",Lập đơn hàng gửi cho Nhà cung cấp để yêu cầu cung cấp hàng hóa.,"Ghi nhận hàng hóa thực tế vào kho
+Tạo lô hàng trên hệ thống, Barcode và cập nhật tồn kho.","Ghi nhận hàng hóa được ra khỏi kho.
+Gợi ý xuất kho các sản phẩm theo lô hàng có HSD trước (FEFO). ","Di chuyển hàng hóa giữa kho thường và kho lỗi (khi hàng bị lỗi chuyển về kho lỗi, khi phát hiện bị nhầm lẫn chuyển lại về kho thường).",Đếm số lượng thực tế của từng lô hàng và so sánh với hệ thống để ghi nhận chênh lệch.,"Dựa trên kết quả kiểm kê, tạo các phiếu Nhập/Xuất để điều chỉnh số liệu tồn kho của từng lô cho khớp với thực tế.","Xem, phân tích dữ liệu kho và dự báo.
+Mọi báo cáo đều có thể được xem chi tiết.","Loại bỏ các sản phẩm hỏng, lỗi từ kho lỗi ra khỏi hệ thống theo từng lô cụ thể.","Khách hàng trả sản phẩm.
+Nhân viên xử lý việc tiếp nhận lại sản phẩm từ các nguồn và đưa vào kho phù hợp theo lô của sản phẩm.
+Hoàn tiền.","Khách hàng chọn sản phẩm, thanh toán và nhận hóa đơn.
+Thu ngân thực hiện kiểm tra, giao hàng và xuất hóa đơn.
+Hệ thống tự động tạo phiếu xuất kho tương ứng."
+Tiền điều kiện,Quản lý đã đăng nhập với quyền quản trị.,"Nhân viên đã đăng nhập.
+Sản phẩm và tên nhà cung cấp có trên hệ thống.","Nhân viên đã đăng nhập.
+Đã có sản phẩm thực tế.","Nhân viên đã đăng nhập.
+Sản phẩm tồn kho đủ để xuất.",Nhân văn đã đăng nhập.,Nhân viên đã đăng nhập.,"Nhân viên đăng nhập.
+Phải hoàn thành phiếu kiểm kê trước.",Quản lí hoặc thu ngân đã đăng nhập Dữ liệu kho và bán hàng được cập nhật,"Nhân viên đăng nhập.
+Hàng cần hủy có tồn kho.","Nhân viên đăng nhập.
+Sản phẩm đủ điều kiện và còn thời hạn trả hàng.","Thu ngân đã đăng nhập.
+Sản phẩm có tồn kho tại Kho thường."
+Hậu điều kiện,Lô sản phẩm với mã lô được tạo ra.,Một Phiếu đặt hàng mới được tạo.,"Phiếu Nhập Kho được tạo.
+Số lượng tồn kho được tăng tại kho được chọn.
+Lô sản phẩm và Barcode được tạo ra.","Phiếu xuất kho được tạo.
+Số lượng tồn kho tương ứng bị giảm.",Số lượng tồn kho được tăng ở kho đến và giảm ở kho đi.,"Một Phiếu Kiểm kê được tạo, ghi lại chi tiết chênh lệch nếu có.","Các Phiếu Nhập/Xuất điều chỉnh được tạo. 
+Tồn kho được cập nhật lại chính xác.",Báo cáo hiển thị đầy đủ và chính xác Xuất báo cáo dưới các dạng sau PDF/Excel/Bản giấy để kiểm kê,"Số lượng tồn kho ở kho lỗi giảm đi.
+Phiếu Xuất Kho (mục đích: Hủy hàng) được tạo.","Phiếu Nhập Kho (mục đích: Khách trả hàng) được tạo.
+Tồn kho tăng tại Kho thường/lỗi.
+Hoàn tiền cho khách hàng thành công.","Hóa đơn được tạo.
+Phiếu Xuất Kho (mục đích: Xuất bán hàng) được tạo.
+Tồn kho tại Kho thường giảm đi."
+Luồng chính,"1. Quản lý chọn chức năng ""Quản lý danh mục sản phẩm""
+2. Hệ thống hiển thị lên danh mục sản phẩm hiện có
+3. Quản lý thêm sản phẩm vào danh mục tương ứng
+4. Điền thông tin sản phẩm (tên, đơn vị tính, mã SP,...)
+5. Hệ thống lưu thay đổi
+","1. Nhân viên chọn chức năng ""Tạo Đơn đặt hàng"".
+2. Chọn tên nhà cung cấp.
+3. Thêm các sản phẩm và số lượng cần đặt.
+4. Lưu đơn hàng.
+5. Quản lý kho duyệt.","1. Chọn chức năng ""Nhập kho""
+2. Chọn mục đích nhập (nhập từ nhà cung cấp, nhập do KH trả,...).
+3. Thêm sản phẩm, nhập số lượng.
+4. Hệ thống yêu cầu nhập thông tin lô hàng: Số lô, NSX, HSD.
+5. Chọn Kho nhập (Thường/Lỗi).
+6. Duyệt phiếu để cập nhật tồn kho.","1. Chọn chức năng ""Xuất kho""
+2. Chọn mục đích xuất.
+3. Nhập tên sản phẩm.
+4. Hệ thống hiển thị các lô đang tồn và gợi ý lô có HSD gần nhất (FEFO).
+5. Chọn lô và quét Barcode sản phẩm.
+6. Duyệt phiếu để cập nhật tồn kho.","1. Chọn chức năng ""Chuyển kho"".
+2. Chọn chiều chuyển: Kho thường -> Kho lỗi hoặc Kho lỗi -> Kho thường
+3. Chọn lô hàng và quét barcode sản phẩm cần chuyển.
+4. Xác nhận.
+5. Hệ thống tạo 1 Phiếu Xuất (từ kho đi) và 1 Phiếu Nhập (vào kho đến).","1. Chọn chức năng ""Kiểm kê kho"" và kho cần kiểm.
+2. Hệ thống xuất danh sách tồn kho chi tiết theo từng lô.
+3. NV quét mã barcode và điền số lượng thực tế kiểm tra được.
+4. Chọn ""Hoàn thành"", hệ thống tính chênh lệch hiện tại.","1. Mở Phiếu Kiểm kê có chênh lệch cần điểu chỉnh.
+2. Chọn ""Tạo phiếu điều chỉnh"".
+3. Hệ thống tạo phiếu xuất cho trường lô hàng bị thiếu và phiếu nhập cho lô hàng bị thừa.
+4. Duyệt các phiếu để cập nhật tồn kho.","1. Chọn mục ""Báo cáo"".
+2. Chọn loại báo cáo (tồn kho, lịch sử lô, trả hàng...).
+3. Có thể lọc/nhóm theo lô, HSD, NSX.
+4. Hệ thống hiển thị kết quả.
+5. Dự đoán thời gian hết hàng để đặt hàng từ NCC","1. Chọn ""Hủy hàng"".
+2. Chọn hàng cần hủy ở kho lỗi.
+3. Nhập số lượng và lý do.
+4. Hệ thống tạo Phiếu Xuất Kho (mục đích: Xuất hủy hàng).","1. Khách hàng yêu cầu trả hàng, cung cấp hóa đơn. 
+2. Thu ngân tìm hóa đơn gốc.
+3. Kiểm tra điều kiện trả hàng.
+4. Chọn kho nhập (Thường/Lỗi). 
+5. Hệ thống tính tiền cần trả.
+6. Thu ngân hoàn tiền cho khách.
+7. Nhân viên chuyển hàng đến kho tương ứng và cập nhật.","1. Thu ngân quét barcode sản phẩm.
+2. Hệ thống xác định lô FEFO từ Kho thường, tính tổng tiền.
+3. Thu ngân nhận thanh toán.
+4. Hoàn tất giao dịch. Hệ thống in hóa đơn và tự động tạo Phiếu Xuất Kho."
+Luồng thay thế,"Tên sản phẩm trùng, hệ thống cảnh báo.","Sản phẩm không tồn tại hoặc số lượng không đủ, yêu cầu tạo mới.","Nếu không có thông tin lô, hệ thống không cho phép nhập.","Nếu tồn kho không đủ, hiển thị cảnh báo ""Nhập lại số lượng"".
+Quét barcode không hợp lệ, hệ thống báo lỗi.","Nếu kho đến từ chối nhận, cần có luồng xử lý ngược lại.","Nếu số liệu không khớp, nhân viên chỉnh sửa và lưu Nếu sản phẩm bị lỗi, nhân viên chỉnh sửa số lượng và đưa về kho lỗi.","Hàng không rõ lô, yêu cầu tạo lô mới.","Nếu dữ liệu chưa đầy đủ, hiển thị cảnh báo.
+Nếu dữ liệu quá lớn, hệ thống có thể cần thời gian để xử lý.",Yêu cầu hủy cần được duyệt bởi quản lý.,"Nếu không tìm thấy hóa đơn, xử lý theo chính sách riêng.
+Nếu không đủ điều kiện, từ chối trả hàng.","Nếu barcode không hợp lệ, hệ thống báo lỗi.
+Nếu sản phẩm hết hàng, hệ thống thông báo.
+Nếu thanh toán thất bại, giao dịch bị hủy."
+Yêu cầu phi chức năng,"Phản hồi < 2s.
+Đảm bảo Mã SP là duy nhất.",Thời gian hệ thống lưu yêu cầu đặt hàng kể từ lúc bắt đầu lưu <2s trong 96% yêu cầu đặt hàng.,"Tốc độ tạo barcode <2s trong 95% lô SP, các barcode không trùng lặp.","Phản hồi quét barcode < 1s với 96% lô SP.
+Thuật toán FEFO chính xác.",Đảm bảo tính toàn vẹn dữ liệu (xuất = nhập).,Đảm bảo dữ liệu tồn kho tại thời điểm bắt đầu chính xác để so sánh đúng.,"Đảm báo tính toàn vẹn dữ liệu.
+Ghi lại nhật ký sửa đổi.
+Thời gian xử lý phiếu nhanh.",Tải báo cáo nhanh <3 giây,Ghi nhật ký tất cả hoạt động hủy hàng để chống gian lận.,Xử lý nhanh và chính xác < 2 giây ; Phiếu trả hàng lưu an toàn,"Thanh toán an toàn, bảo mật(?); Cập nhật tồn kho <2 giây"
