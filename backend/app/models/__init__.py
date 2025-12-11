@@ -45,7 +45,7 @@ class ThuNgan(db.Model):
     Ten = db.Column(db.String(100), nullable=False)
     DiaChi = db.Column(db.String(200))
     NgaySinh = db.Column(db.Date)
-    GioiTinh = db.Column(db.Enum(GioiTinh))
+    GioiTinh = db.Column(db.Enum(GioiTinh, values_callable=lambda x: [e.value for e in x]))
     SDT = db.Column(db.String(15))
     TaiKhoanNV = db.Column(db.String(50), unique=True)
     MatKhau = db.Column(db.String(255))  # Added for authentication
@@ -72,10 +72,10 @@ class NhanVienKho(db.Model):
     Ten = db.Column(db.String(100), nullable=False)
     DiaChi = db.Column(db.String(200))
     NgaySinh = db.Column(db.Date)
-    GioiTinh = db.Column(db.Enum(GioiTinh))
+    GioiTinh = db.Column(db.Enum(GioiTinh, values_callable=lambda x: [e.value for e in x]))
     SDT = db.Column(db.String(15))
     TaiKhoanNV = db.Column(db.String(50), unique=True)
-    Role = db.Column(db.Enum(RoleNV), default=RoleNV.NHAN_VIEN)
+    Role = db.Column(db.Enum(RoleNV, values_callable=lambda x: [e.value for e in x]), default=RoleNV.NHAN_VIEN)
     MatKhau = db.Column(db.String(255))  # Added for authentication
     
     # Relationships
@@ -129,7 +129,7 @@ class SanPham(db.Model):
     MaSP = db.Column(db.String(20), primary_key=True)
     TenSP = db.Column(db.String(200), nullable=False)
     LoaiSP = db.Column(db.String(100))
-    TrangThai = db.Column(db.Enum(TrangThaiSP), default=TrangThaiSP.CON_HANG)
+    TrangThai = db.Column(db.Enum(TrangThaiSP, values_callable=lambda x: [e.value for e in x]), default=TrangThaiSP.CON_HANG)
     DVT = db.Column(db.String(20))  # Đơn vị tính
     GiaBan = db.Column(db.Numeric(15, 2), nullable=False)
     MucCanhBaoDatHang = db.Column(db.Integer, default=10)
@@ -159,7 +159,7 @@ class KhoHang(db.Model):
     
     MaKho = db.Column(db.String(20), primary_key=True)
     DiaChi = db.Column(db.String(200))
-    Loai = db.Column(db.Enum(LoaiKho), nullable=False)
+    Loai = db.Column(db.Enum(LoaiKho, values_callable=lambda x: [e.value for e in x]), nullable=False)
     SucChua = db.Column(db.Integer)
     MaPhieuXK = db.Column(db.String(20))
     MaPhieuNK = db.Column(db.String(20))
