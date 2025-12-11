@@ -91,28 +91,49 @@ DAHTTT_Warehouse_Refactor/
 cd backend
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Setup database
+# Setup database (IMPORTANT: Run this first!)
 mysql -u root -p < ../db/init.sql
 
 # Configure environment variables
 cp .env.example .env
-# Edit .env with your database credentials
+# Edit .env with your database credentials:
+# - MYSQL_HOST=localhost
+# - MYSQL_USER=root
+# - MYSQL_PASSWORD=your_password
+# - MYSQL_DATABASE=QuanLyKho
+# - SECRET_KEY=your-secret-key
+# - JWT_SECRET_KEY=your-jwt-secret
 
-# Run migrations
+# Initialize Flask-Migrate
 flask db init
-flask db migrate -m "Initial migration"
+
+# Create migration for password fields
+flask db migrate -m "Add MatKhau fields"
+
+# Apply migration to database
 flask db upgrade
+
+# Seed passwords for existing users
+python seed_passwords.py
+# Default password: 123456 for all users
+# Usernames: nva_kho, ttb_kho, lvc_kho, ptd_thungan, hve_thungan
 
 # Start server
 python run.py
 # Server runs on http://localhost:5000
 ```
+
+**⚠️ Important Notes:**
+- Database `init.sql` MUST be executed first before running migrations
+- Migration only adds `MatKhau` columns to `NhanVienKho` and `ThuNgan` tables
+- All users have default password: `123456` (hashed with bcrypt)
+- Do NOT edit `init.sql` - all schema changes should be via migrations
 
 ### Frontend Setup
 
@@ -150,6 +171,21 @@ JWT-based authentication với 3 roles:
 - `QuanLy` - Quản lý kho
 - `NhanVien` - Nhân viên kho
 - `ThuNgan` - Thu ngân
+
+### 👤 Default Accounts
+
+Sau khi chạy `seed_passwords.py`, có thể đăng nhập với các tài khoản:
+
+| Username | Password | Role | Tên | Mô tả |
+|----------|----------|------|-----|--------|
+| nva_kho | 123456 | QuanLy | Nguyễn Văn An | Quản lý kho - Full access |
+| ttb_kho | 123456 | NhanVien | Trần Thị Bình | Nhân viên kho - Warehouse operations |
+| lvc_kho | 123456 | NhanVien | Lê Văn Cường | Nhân viên kho - Warehouse operations |
+| ptd_thungan | 123456 | ThuNgan | Phạm Thị Dung | Thu ngân - Sales & returns |
+| hve_thungan | 123456 | ThuNgan | Hoàng Văn Em | Thu ngân - Sales & returns |
+
+**⚠️ Security Warning:**  
+Đổi mật khẩu mặc định trong production environment!
 
 ## 📝 API Endpoints
 
@@ -233,6 +269,46 @@ cd frontend
 npm run test
 ```
 
+## 🔧 Troubleshooting
+
+### Migration Issues
+
+**Problem**: `FileNotFoundError: migrations/alembic.ini doesn't exist`  
+**Solution**: 
+```bash
+cd backend
+rm -rf migrations
+flask db init
+flask db migrate -m "Add MatKhau fields"
+flask db upgrade
+```
+
+**Problem**: `Cannot drop index 'idx_losp_kho': needed in a foreign key constraint`  
+**Solution**: Migration file đã được chỉnh sửa để chỉ thêm cột MatKhau, không drop index.
+
+**Problem**: `Data truncated for column 'Loai' at row 1`  
+**Solution**: SQLAlchemy Enum đã được fix với `values_callable=lambda x: [e.value for e in x]` trong models.
+
+### Database Connection
+
+**Problem**: `Can't connect to MySQL server`  
+**Solution**: 
+- Kiểm tra MySQL service đang chạy: `sudo systemctl status mysql`
+- Verify credentials trong `.env`
+- Đảm bảo database `QuanLyKho` đã được tạo
+
+### Frontend Issues
+
+**Problem**: `Cannot find module 'tailwindcss-animate'`  
+**Solution**: 
+```bash
+cd frontend
+npm install tailwindcss-animate
+```
+
+**Problem**: CORS errors  
+**Solution**: Backend đã config CORS cho `http://localhost:5173`, kiểm tra port frontend.
+
 ## 📦 Production Build
 
 ### Backend
@@ -259,4 +335,5 @@ Team DAHTTT - Warehouse Management System
 ---
 
 **Version**: 1.0.0  
-**Last Updated**: December 2024
+**Last Updated**: December 12, 2025  
+**Database Schema**: init.sql (base) + Flask-Migrate (password fields)
