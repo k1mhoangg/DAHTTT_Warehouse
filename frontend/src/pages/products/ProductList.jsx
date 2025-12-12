@@ -41,7 +41,7 @@ export default function ProductList() {
             if (filterCategory !== 'all') params.append('loai', filterCategory);
             if (filterStatus !== 'all') params.append('trang_thai', filterStatus);
 
-            const response = await api.get(`/api/products?${params.toString()}`);
+            const response = await api.get(`/products?${params.toString()}`);
             return response.data;
         },
     });
@@ -53,7 +53,7 @@ export default function ProductList() {
     const { data: categoriesResponse } = useQuery({
         queryKey: ['product-categories'],
         queryFn: async () => {
-            const response = await api.get('/api/products/categories');
+            const response = await api.get('/products/categories');
             return response.data;
         },
     });
@@ -63,7 +63,7 @@ export default function ProductList() {
     // Delete product mutation
     const deleteMutation = useMutation({
         mutationFn: async (id) => {
-            const response = await api.delete(`/api/products/${id}`);
+            const response = await api.delete(`/products/${id}`);
             return response.data;
         },
         onSuccess: () => {
