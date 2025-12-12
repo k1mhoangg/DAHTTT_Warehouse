@@ -72,15 +72,61 @@ export const productService = {
 // =============================================
 
 export const warehouseService = {
+    // Warehouse data
+    getWarehouses: async () => {
+        const response = await api.get('/warehouse/warehouses')
+        return response.data
+    },
+
+    getWarehouseInventory: async (maKho) => {
+        const response = await api.get(`/warehouse/warehouses/${maKho}/inventory`)
+        return response.data
+    },
+
+    getBatches: async (params) => {
+        const response = await api.get('/warehouse/batches', { params })
+        return response.data
+    },
+
     // UC03: Import
+    getImports: async () => {
+        const response = await api.get('/warehouse/import')
+        return response.data
+    },
+
+    getImport: async (id) => {
+        const response = await api.get(`/warehouse/import/${id}`)
+        return response.data
+    },
+
     importWarehouse: async (data) => {
         const response = await api.post('/warehouse/import', data)
         return response.data
     },
 
+    deleteImport: async (id) => {
+        const response = await api.delete(`/warehouse/import/${id}`)
+        return response.data
+    },
+
     // UC04: Export (FEFO)
+    getExports: async () => {
+        const response = await api.get('/warehouse/export')
+        return response.data
+    },
+
+    getExport: async (id) => {
+        const response = await api.get(`/warehouse/export/${id}`)
+        return response.data
+    },
+
     exportWarehouse: async (data) => {
         const response = await api.post('/warehouse/export', data)
+        return response.data
+    },
+
+    deleteExport: async (id) => {
+        const response = await api.delete(`/warehouse/export/${id}`)
         return response.data
     },
 

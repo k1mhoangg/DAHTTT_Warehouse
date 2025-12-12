@@ -12,7 +12,7 @@ from flask import Blueprint, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models import (
     PhieuNhapKho, PhieuXuatKho, PhieuChuyenKho, PhieuKiemKho,
-    BaoCao, LoSP, SanPham, KhoHang
+    BaoCao, LoSP, SanPham, KhoHang, TaoPhieu, DuyetPhieu
 )
 from app import db
 from app.utils.auth import role_required
@@ -27,8 +27,145 @@ warehouse_bp = Blueprint('warehouse', __name__)
 
 
 # =============================================
+# COMMON ENDPOINTS - WAREHOUSE DATA
+# =============================================
+
+@warehouse_bp.route('/warehouses', methods=['GET'])
+@jwt_required()
+def get_warehouses():
+    """Get all warehouses"""
+    warehouses = KhoHang.query.all()
+    return success_response({
+        'warehouses': [w.to_dict() for w in warehouses]
+    })
+
+
+@warehouse_bp.route('/warehouses/<string:ma_kho>/inventory', methods=['GET'])
+@jwt_required()
+def get_warehouse_inventory(ma_kho):
+    """Get inventory of a specific warehouse"""
+    batches = LoSP.query.filter_by(MaKho=ma_kho).all()
+    
+    inventory = []
+    for batch in batches:
+        batch_data = batch.to_dict()
+        # Include product information
+        san_pham = SanPham.query.get(batch.MaSP)
+        if san_pham:
+            batch_data['product'] = san_pham.to_dict()
+        inventory.append(batch_data)
+    
+    return success_response({
+        'inventory': inventory,
+        'total_batches': len(inventory)
+    })
+
+
+@warehouse_bp.route('/batches', methods=['GET'])
+@jwt_required()
+def get_batches():
+    """Get all batches with filters"""
+    ma_kho = request.args.get('ma_kho')
+    ma_sp = request.args.get('ma_sp')
+    
+    query = LoSP.query
+    
+    if ma_kho:
+        query = query.filter_by(MaKho=ma_kho)
+    if ma_sp:
+        query = query.filter_by(MaSP=ma_sp)
+    
+    batches = query.all()
+    
+    result = []
+    for batch in batches:
+        batch_data = batch.to_dict()
+        san_pham = SanPham.query.get(batch.MaSP)
+        if san_pham:
+            batch_data['product'] = san_pham.to_dict()
+        result.append(batch_data)
+    
+    return success_response({
+        'batches': result,
+        'total': len(result)
+    })
+
+
+# =============================================
 # UC03: NHẬP KHO
 # =============================================
+
+@warehouse_bp.route('/import', methods=['GET'])
+@jwt_required()
+def get_imports():
+    """Get all import receipts"""
+    phieu_list = PhieuNhapKho.query.order_by(PhieuNhapKho.NgayTao.desc()).all()
+    
+    result = []
+    for phieu in phieu_list:
+        phieu_data = phieu.to_dict()
+        # Get batches for this import
+        batches = LoSP.query.filter_by(MaPhieuNK=phieu.MaPhieu).all()
+        phieu_data['items'] = []
+        for batch in batches:
+            batch_data = batch.to_dict()
+            san_pham = SanPham.query.get(batch.MaSP)
+            if san_pham:
+                batch_data['product'] = san_pham.to_dict()
+            phieu_data['items'].append(batch_data)
+        result.append(phieu_data)
+    
+    return success_response({
+        'imports': result,
+        'total': len(result)
+    })
+
+
+@warehouse_bp.route('/import/<string:ma_phieu>', methods=['GET'])
+@jwt_required()
+def get_import(ma_phieu):
+    """Get specific import receipt details"""
+    phieu = PhieuNhapKho.query.get(ma_phieu)
+    if not phieu:
+        return error_response("Import receipt not found", 404)
+    
+    phieu_data = phieu.to_dict()
+    batches = LoSP.query.filter_by(MaPhieuNK=ma_phieu).all()
+    phieu_data['items'] = []
+    for batch in batches:
+        batch_data = batch.to_dict()
+        san_pham = SanPham.query.get(batch.MaSP)
+        if san_pham:
+            batch_data['product'] = san_pham.to_dict()
+        phieu_data['items'].append(batch_data)
+    
+    return success_response(phieu_data)
+
+
+@warehouse_bp.route('/import/<string:ma_phieu>', methods=['DELETE'])
+@jwt_required()
+@role_required('Quản lý')
+def delete_import(ma_phieu):
+    """Delete import receipt (Manager only)"""
+    phieu = PhieuNhapKho.query.get(ma_phieu)
+    if not phieu:
+        return error_response("Import receipt not found", 404)
+    
+    try:
+        # Delete related batches first
+        LoSP.query.filter_by(MaPhieuNK=ma_phieu).delete()
+        
+        # Delete tao phieu record
+        TaoPhieu.query.filter_by(MaPhieuTao=ma_phieu).delete()
+        
+        # Delete the receipt
+        db.session.delete(phieu)
+        db.session.commit()
+        
+        return success_response(None, message="Import receipt deleted successfully")
+    except Exception as e:
+        db.session.rollback()
+        return error_response(f"Error deleting import receipt: {str(e)}", 500)
 
 @warehouse_bp.route('/import', methods=['POST'])
 @jwt_required()
@@ -143,23 +280,87 @@ def import_warehouse():
 # UC04: XUẤT KHO (FEFO)
 # =============================================
 
+@warehouse_bp.route('/export', methods=['GET'])
+@jwt_required()
+def get_exports():
+    """Get all export receipts"""
+    phieu_list = PhieuXuatKho.query.order_by(PhieuXuatKho.NgayTao.desc()).all()
+    
+    result = []
+    for phieu in phieu_list:
+        phieu_data = phieu.to_dict()
+        # Get batches for this export
+        batches = LoSP.query.filter_by(MaPhieuXK=phieu.MaPhieu).all()
+        phieu_data['items'] = []
+        for batch in batches:
+            batch_data = batch.to_dict()
+            san_pham = SanPham.query.get(batch.MaSP)
+            if san_pham:
+                batch_data['product'] = san_pham.to_dict()
+            phieu_data['items'].append(batch_data)
+        result.append(phieu_data)
+    
+    return success_response({
+        'exports': result,
+        'total': len(result)
+    })
+
+
+@warehouse_bp.route('/export/<string:ma_phieu>', methods=['GET'])
+@jwt_required()
+def get_export(ma_phieu):
+    """Get specific export receipt details"""
+    phieu = PhieuXuatKho.query.get(ma_phieu)
+    if not phieu:
+        return error_response("Export receipt not found", 404)
+    
+    phieu_data = phieu.to_dict()
+    batches = LoSP.query.filter_by(MaPhieuXK=ma_phieu).all()
+    phieu_data['items'] = []
+    for batch in batches:
+        batch_data = batch.to_dict()
+        san_pham = SanPham.query.get(batch.MaSP)
+        if san_pham:
+            batch_data['product'] = san_pham.to_dict()
+        phieu_data['items'].append(batch_data)
+    
+    return success_response(phieu_data)
+
+
+@warehouse_bp.route('/export/<string:ma_phieu>', methods=['DELETE'])
+@jwt_required()
+@role_required('Quản lý')
+def delete_export(ma_phieu):
+    """Delete export receipt (Manager only)"""
+    phieu = PhieuXuatKho.query.get(ma_phieu)
+    if not phieu:
+        return error_response("Export receipt not found", 404)
+    
+    try:
+        # Cannot delete if it affects inventory - need to reverse
+        return error_response("Export receipts cannot be deleted. Use inventory adjustment instead.", 400)
+    except Exception as e:
+        db.session.rollback()
+        return error_response(f"Error deleting export receipt: {str(e)}", 500)
+
 @warehouse_bp.route('/export', methods=['POST'])
 @jwt_required()
 @role_required('Quản lý', 'Nhân viên')
 def export_warehouse():
     """
-    Xuất kho với FEFO (UC04)
+    Xuất kho với FEFO (UC04) - Theo đúng logic nghiệp vụ
     
     Request body:
         {
             "MaKho": "string",
-            "MucDich": "string",
+            "MucDich": "string", 
             "MaThamChieu": "string",
             "items": [
                 {
                     "MaSP": "string",
-                    "SoLuong": int,
-                    "MaLo": "string" (optional, auto FEFO if not provided)
+                    "MaLo": "string",
+                    "MaVach": "string",
+                    "SoLuong": int
                 }
             ]
         }
@@ -167,9 +368,14 @@ def export_warehouse():
     data = request.get_json()
     claims = get_jwt_identity()
     
-    # Validate
+    # Validate required fields
     if not data.get('MaKho') or not data.get('items'):
         return error_response("MaKho and items are required", 400)
+    
+    # Check warehouse exists
+    kho = KhoHang.query.get(data['MaKho'])
+    if not kho:
+        return error_response("Warehouse not found", 404)
     
     # Generate phiếu xuất kho
     ma_phieu = generate_id('PXK', 6)
@@ -185,91 +391,85 @@ def export_warehouse():
     
     db.session.add(phieu)
     
-    # Process items with FEFO
+    # Process items với validation nghiêm ngặt theo UC04
     exported_batches = []
     for item in data['items']:
         ma_sp = item.get('MaSP')
-        so_luong_can_xuat = item.get('SoLuong', 0)
-        ma_lo_yeu_cau = item.get('MaLo')
+        ma_lo = item.get('MaLo') 
+        ma_vach = item.get('MaVach')
+        so_luong_xuat = item.get('SoLuong', 0)
         
-        # If specific batch requested
-        if ma_lo_yeu_cau:
-            batch = LoSP.query.filter_by(
-                MaSP=ma_sp,
-                MaLo=ma_lo_yeu_cau,
-                MaKho=data['MaKho']
-            ).first()
-            
-            if not batch or batch.SLTon < so_luong_can_xuat:
-                db.session.rollback()
-                return error_response(
-                    f"Insufficient stock for batch {ma_lo_yeu_cau}",
-                    400
-                )
-            
-            batch.SLTon -= so_luong_can_xuat
-            batch.MaPhieuXK = ma_phieu
-            exported_batches.append({
-                **batch.to_dict(),
-                'exported_quantity': so_luong_can_xuat
-            })
-        else:
-            # FEFO: Get batches sorted by HSD (earliest first)
-            batches = LoSP.query.filter(
-                and_(
-                    LoSP.MaSP == ma_sp,
-                    LoSP.MaKho == data['MaKho'],
-                    LoSP.SLTon > 0
-                )
-            ).order_by(LoSP.HSD.asc()).all()
-            
-            so_luong_con_lai = so_luong_can_xuat
-            
-            for batch in batches:
-                if so_luong_con_lai <= 0:
-                    break
-                
-                if batch.SLTon >= so_luong_con_lai:
-                    # This batch has enough
-                    batch.SLTon -= so_luong_con_lai
-                    batch.MaPhieuXK = ma_phieu
-                    exported_batches.append({
-                        **batch.to_dict(),
-                        'exported_quantity': so_luong_con_lai
-                    })
-                    so_luong_con_lai = 0
-                else:
-                    # Take all from this batch
-                    exported_quantity = batch.SLTon
-                    batch.SLTon = 0
-                    batch.MaPhieuXK = ma_phieu
-                    exported_batches.append({
-                        **batch.to_dict(),
-                        'exported_quantity': exported_quantity
-                    })
-                    so_luong_con_lai -= exported_quantity
-            
-            if so_luong_con_lai > 0:
-                db.session.rollback()
-                return error_response(
-                    f"Insufficient stock for product {ma_sp}. Missing {so_luong_con_lai} units.",
-                    400
-                )
+        # Validate required fields cho từng item
+        if not all([ma_sp, ma_lo, ma_vach, so_luong_xuat > 0]):
+            db.session.rollback()
+            return error_response("MaSP, MaLo, MaVach and SoLuong are required for each item", 400)
+        
+        # Validate product exists
+        san_pham = SanPham.query.get(ma_sp)
+        if not san_pham:
+            db.session.rollback()
+            return error_response(f"Product {ma_sp} not found", 404)
+        
+        # Find batch với barcode validation (UC04: Quét barcode)
+        batch = LoSP.query.filter_by(
+            MaSP=ma_sp,
+            MaLo=ma_lo,
+            MaVach=ma_vach,
+            MaKho=data['MaKho']
+        ).first()
+        
+        if not batch:
+            db.session.rollback()
+            return error_response(
+                f"Batch {ma_lo} with barcode {ma_vach} not found in warehouse {data['MaKho']}", 
+                404
+            )
+        
+        # Check stock availability
+        if batch.SLTon < so_luong_xuat:
+            db.session.rollback()
+            return error_response(
+                f"Insufficient stock for batch {ma_lo}. Available: {batch.SLTon}, Requested: {so_luong_xuat}",
+                400
+            )
+        
+        # Business rule: Không được xuất hàng hết hạn
+        if batch.HSD and batch.HSD < datetime.utcnow().date():
+            db.session.rollback()
+            return error_response(
+                f"Cannot export expired batch {ma_lo}. Expiry date: {batch.HSD}",
+                400
+            )
+        
+        # Update stock
+        batch.SLTon -= so_luong_xuat
+        batch.MaPhieuXK = ma_phieu
+        
+        exported_batches.append({
+            **batch.to_dict(),
+            'exported_quantity': so_luong_xuat,
+            'product': san_pham.to_dict()
+        })
     
     # Record who created this phiếu
-    from app.models import TaoPhieu
     tao_phieu = TaoPhieu(
         MaNV=claims['id'],
         MaPhieuTao=ma_phieu
     )
     db.session.add(tao_phieu)
     
-    db.session.commit()
-    
-    return success_response({
-        'phieu': phieu.to_dict(),
-        'batches': exported_batches
-    }, message="Export successful", status=201)
+    try:
+        db.session.commit()
+        
+        return success_response({
+            'phieu': phieu.to_dict(),
+            'exported_items': exported_batches,
+            'total_items': len(exported_batches)
+        }, message="Export successful", status=201)
+        
+    except Exception as e:
+        db.session.rollback()
+        return error_response(f"Error processing export: {str(e)}", 500)
 
 
 @warehouse_bp.route('/export/suggest-fefo', methods=['POST'])
