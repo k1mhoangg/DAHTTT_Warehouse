@@ -39,7 +39,7 @@ export default function ProductForm() {
     const { data: productResponse, isLoading: isLoadingProduct } = useQuery({
         queryKey: ['product', id],
         queryFn: async () => {
-            const response = await api.get(`/api/products/${id}`);
+            const response = await api.get(`/products/${id}`);
             return response.data;
         },
         enabled: isEditMode,
@@ -49,7 +49,7 @@ export default function ProductForm() {
     const { data: categoriesResponse } = useQuery({
         queryKey: ['product-categories'],
         queryFn: async () => {
-            const response = await api.get('/api/products/categories');
+            const response = await api.get('/products/categories');
             return response.data;
         },
     });
@@ -75,7 +75,7 @@ export default function ProductForm() {
     // Create mutation
     const createMutation = useMutation({
         mutationFn: async (data) => {
-            const response = await api.post('/api/products', data);
+            const response = await api.post('/products', data);
             return response.data;
         },
         onSuccess: () => {
@@ -98,7 +98,7 @@ export default function ProductForm() {
     // Update mutation
     const updateMutation = useMutation({
         mutationFn: async (data) => {
-            const response = await api.put(`/api/products/${id}`, data);
+            const response = await api.put(`/products/${id}`, data);
             return response.data;
         },
         onSuccess: () => {
