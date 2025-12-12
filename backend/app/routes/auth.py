@@ -1,7 +1,7 @@
 """Authentication routes"""
 
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity, get_jwt
 from app.models import NhanVienKho, ThuNgan
 from app import db
 import bcrypt
@@ -66,14 +66,17 @@ def login():
     
     # Create JWT token with user info
     additional_claims = {
-        "id": user.MaNV,
         "type": user_type,
         "role": user.Role.value if user_type == 'NhanVienKho' else 'ThuNgan',
         "username": user.TaiKhoanNV,
         "name": user.Ten
     }
-    
-    access_token = create_access_token(identity=additional_claims)
+
+    access_token = create_access_token(
+        identity=str(user.MaNV),      # <-- BẮT BUỘC PHẢI LÀ STRING HOẶC INT
+        additional_claims=additional_claims
+    )
+
     
     return jsonify({
         "success": True,
@@ -96,30 +99,35 @@ def login():
 def get_current_user():
     """Get current authenticated user info"""
     
-    claims = get_jwt_identity()
-    user_id = claims.get('id')
-    user_type = claims.get('type')
+    user_id = get_jwt_identity()  # string: "NVK001"
+    claims = get_jwt()            # object chứa claims (type, role, name)
+
+    user_type = claims.get("type")
     
-    # Get user from database
+    # Load user
     user = None
     if user_type == 'NhanVienKho':
         user = NhanVienKho.query.get(user_id)
     elif user_type == 'ThuNgan':
         user = ThuNgan.query.get(user_id)
-    
+
     if not user:
         return jsonify({
             "success": False,
             "message": "User not found"
         }), 404
-    
+
     return jsonify({
         "success": True,
         "data": {
             **user.to_dict(),
-            "Type": user_type
+            "Type": user_type,
+            "Role": claims.get("role"),
+            "Username": claims.get("username"),
+            "Name": claims.get("name"),
         }
     }), 200
+
 
 
 @auth_bp.route('/logout', methods=['POST'])
