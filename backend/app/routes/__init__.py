@@ -2,9 +2,10 @@
 
 from app.routes.auth import auth_bp
 from app.routes.products import product_bp
+from app.routes.warehouse import warehouse_bp
+
 
 # Import các routes khác khi đã tạo
-# from app.routes.warehouse import warehouse_bp
 # from app.routes.orders import order_bp
 # from app.routes.reports import report_bp
 # from app.routes.sales import sales_bp
@@ -13,7 +14,6 @@ from app.routes.products import product_bp
 # Temporary placeholder blueprints
 from flask import Blueprint
 
-warehouse_bp = Blueprint('warehouse', __name__)
 order_bp = Blueprint('orders', __name__)
 report_bp = Blueprint('reports', __name__)
 sales_bp = Blueprint('sales', __name__)
