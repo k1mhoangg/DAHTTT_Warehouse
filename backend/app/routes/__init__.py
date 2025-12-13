@@ -3,7 +3,7 @@
 from app.routes.auth import auth_bp
 from app.routes.products import product_bp
 from app.routes.warehouse import warehouse_bp
-
+from app.routes.warehouse_inventory import warehouse_inventory_bp
 
 # Import các routes khác khi đã tạo
 # from app.routes.orders import order_bp
@@ -23,6 +23,7 @@ __all__ = [
     'auth_bp',
     'product_bp',
     'warehouse_bp',
+    'warehouse_inventory_bp',
     'order_bp',
     'report_bp',
     'sales_bp',

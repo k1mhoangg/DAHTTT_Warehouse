@@ -17,7 +17,7 @@ warehouse_inventory_bp = Blueprint('warehouse_inventory', __name__)
 
 
 # =============================================
-# UC06: KIỂM KHO
+# UC06: KIỂM KHO - ENHANCED
 # =============================================
 
 @warehouse_inventory_bp.route('/inventory/start', methods=['POST'])
@@ -34,10 +34,24 @@ def start_inventory():
         }
     """
     data = request.get_json()
-    claims = get_jwt_identity()
+    identity = get_jwt_identity()
+    
+    # Handle both string and dict identity formats
+    if isinstance(identity, str):
+        ma_nv = identity
+    elif isinstance(identity, dict):
+        ma_nv = identity.get('id') or identity.get('MaNV') or identity.get('username')
+    else:
+        ma_nv = str(identity)
     
     if not data.get('MaKho'):
         return error_response("MaKho is required", 400)
+    
+    # Check warehouse exists
+    from app.models import KhoHang
+    kho = KhoHang.query.get(data['MaKho'])
+    if not kho:
+        return error_response("Warehouse not found", 404)
     
     # Generate phiếu kiểm kho
     ma_phieu = generate_id('PKK', 6)
@@ -53,18 +67,30 @@ def start_inventory():
     
     db.session.add(phieu)
     
-    # Get all batches in this warehouse
+    # Get all batches in this warehouse (snapshot at start time)
     batches = LoSP.query.filter_by(MaKho=data['MaKho']).all()
     
     batch_list = []
     for batch in batches:
-        batch_data = batch.to_dict()
-        batch_data['SLHeThong'] = batch.SLTon  # Current system quantity
-        batch_data['SLThucTe'] = None  # To be filled during counting
+        from app.models import SanPham
+        san_pham = SanPham.query.get(batch.MaSP)
+        
+        batch_data = {
+            'MaSP': batch.MaSP,
+            'TenSP': san_pham.TenSP if san_pham else batch.MaSP,
+            'DVT': san_pham.DVT if san_pham else '',
+            'MaLo': batch.MaLo,
+            'MaVach': batch.MaVach,
+            'NSX': batch.NSX.isoformat() if batch.NSX else None,
+            'HSD': batch.HSD.isoformat() if batch.HSD else None,
+            'SLHeThong': batch.SLTon,  # Current system quantity at start time
+            'SLThucTe': None,  # To be filled during counting
+            'ChenhLech': None,
+        }
         batch_list.append(batch_data)
     
     # Record who created
-    tao_phieu = TaoPhieu(MaNV=claims['id'], MaPhieuTao=ma_phieu)
+    tao_phieu = TaoPhieu(MaNV=ma_nv, MaPhieuTao=ma_phieu)
     db.session.add(tao_phieu)
     
     db.session.commit()
@@ -72,8 +98,62 @@ def start_inventory():
     return success_response({
         'phieu': phieu.to_dict(),
         'batches': batch_list,
-        'total_batches': len(batch_list)
-    }, message="Inventory started", status=201)
+        'total_batches': len(batch_list),
+        'warehouse': kho.to_dict()
+    }, message="Inventory check started", status=201)
+
+
+@warehouse_inventory_bp.route('/inventory/scan-batch', methods=['POST'])
+@jwt_required()
+def scan_batch_for_inventory():
+    """
+    Scan barcode for inventory check (UC06 Step 3)
+    
+    Request body:
+        {
+            "MaVach": "string",
+            "MaKho": "string"
+        }
+    
+    Response: Batch information for inventory counting
+    """
+    data = request.get_json()
+    
+    ma_vach = data.get('MaVach')
+    ma_kho = data.get('MaKho')
+    
+    if not ma_vach or not ma_kho:
+        return error_response("MaVach and MaKho are required", 400)
+    
+    # Find batch by barcode
+    batch = LoSP.query.filter_by(MaVach=ma_vach, MaKho=ma_kho).first()
+    
+    if not batch:
+        return error_response(
+            f"Barcode {ma_vach} not found in warehouse {ma_kho}", 
+            404
+        )
+    
+    # Get product info
+    from app.models import SanPham
+    san_pham = SanPham.query.get(batch.MaSP)
+    
+    # Check expiry status
+    is_expired = False
+    days_to_expiry = None
+    if batch.HSD:
+        days_to_expiry = (batch.HSD - datetime.utcnow().date()).days
+        is_expired = days_to_expiry < 0
+    
+    return success_response({
+        'batch_info': {
+            **batch.to_dict(),
+            'days_to_expiry': days_to_expiry,
+            'is_expired': is_expired
+        },
+        'product_info': san_pham.to_dict() if san_pham else None,
+        'scan_timestamp': datetime.utcnow().isoformat()
+    })
 
 
 @warehouse_inventory_bp.route('/inventory/record', methods=['POST'])
@@ -81,7 +161,7 @@ def start_inventory():
 @role_required('Quản lý', 'Nhân viên')
 def record_inventory():
     """
-    Ghi nhận kết quả kiểm kê
+    Ghi nhận kết quả kiểm kê (UC06 Step 4)
     
     Request body:
         {
@@ -97,7 +177,15 @@ def record_inventory():
         }
     """
     data = request.get_json()
-    claims = get_jwt_identity()
+    identity = get_jwt_identity()
+    
+    # Handle both string and dict identity formats
+    if isinstance(identity, str):
+        ma_nv = identity
+    elif isinstance(identity, dict):
+        ma_nv = identity.get('id') or identity.get('MaNV') or identity.get('username')
+    else:
+        ma_nv = str(identity)
     
     ma_phieu = data.get('MaPhieu')
     if not ma_phieu:
@@ -109,18 +197,24 @@ def record_inventory():
     
     # Process inventory items
     discrepancies = []
+    total_items = 0
     
     for item in data.get('items', []):
         ma_sp = item.get('MaSP')
         ma_lo = item.get('MaLo')
         ma_vach = item.get('MaVach')
-        sl_thuc_te = item.get('SLThucTe', 0)
+        sl_thuc_te = item.get('SLThucTe')
+        
+        if sl_thuc_te is None:
+            continue
+        
+        sl_thuc_te = int(sl_thuc_te)
         
         # Find batch by barcode or product/batch code
         if ma_vach:
-            batch = LoSP.query.filter_by(MaVach=ma_vach).first()
+            batch = LoSP.query.filter_by(MaVach=ma_vach, MaKho=phieu.MaKho).first()
         else:
-            batch = LoSP.query.filter_by(MaSP=ma_sp, MaLo=ma_lo).first()
+            batch = LoSP.query.filter_by(MaSP=ma_sp, MaLo=ma_lo, MaKho=phieu.MaKho).first()
         
         if not batch:
             continue
@@ -131,6 +225,8 @@ def record_inventory():
         
         # Generate report ID
         ma_bao_cao = generate_id('BC', 6)
+        while BaoCao.query.filter_by(MaPhieu=ma_phieu, MaBaoCao=ma_bao_cao).first():
+            ma_bao_cao = generate_id('BC', 6)
         
         # Create report entry
         bao_cao = BaoCao(
@@ -138,7 +234,7 @@ def record_inventory():
             MaBaoCao=ma_bao_cao,
             SLThucTe=sl_thuc_te,
             NgayTao=datetime.utcnow(),
-            MaNV=claims['id']
+            MaNV=ma_nv
         )
         
         db.session.add(bao_cao)
@@ -147,25 +243,80 @@ def record_inventory():
         batch.MaPhieuKiem = ma_phieu
         batch.MaBaoCao = ma_bao_cao
         
+        total_items += 1
+        
+        # Get product info
+        from app.models import SanPham
+        san_pham = SanPham.query.get(batch.MaSP)
+        
+        item_result = {
+            'MaSP': batch.MaSP,
+            'TenSP': san_pham.TenSP if san_pham else batch.MaSP,
+            'MaLo': batch.MaLo,
+            'MaVach': batch.MaVach,
+            'SLHeThong': sl_he_thong,
+            'SLThucTe': sl_thuc_te,
+            'ChenhLech': chenh_lech,
+            'MaBaoCao': ma_bao_cao
+        }
+        
         if chenh_lech != 0:
-            discrepancies.append({
-                'MaSP': batch.MaSP,
-                'MaLo': batch.MaLo,
-                'MaVach': batch.MaVach,
-                'SLHeThong': sl_he_thong,
-                'SLThucTe': sl_thuc_te,
-                'ChenhLech': chenh_lech,
-                'MaBaoCao': ma_bao_cao
-            })
+            discrepancies.append(item_result)
     
     db.session.commit()
     
     return success_response({
         'phieu': phieu.to_dict(),
+        'total_items': total_items,
         'discrepancies': discrepancies,
         'total_discrepancies': len(discrepancies),
-        'has_discrepancies': len(discrepancies) > 0
-    }, message="Inventory recorded")
+        'has_discrepancies': len(discrepancies) > 0,
+        'summary': {
+            'items_checked': total_items,
+            'items_with_discrepancy': len(discrepancies),
+            'total_surplus': sum(d['ChenhLech'] for d in discrepancies if d['ChenhLech'] > 0),
+            'total_shortage': abs(sum(d['ChenhLech'] for d in discrepancies if d['ChenhLech'] < 0))
+        }
+    }, message="Inventory recorded successfully")
+
+
+@warehouse_inventory_bp.route('/inventory', methods=['GET'])
+@jwt_required()
+def get_inventories():
+    """Get all inventory checks"""
+    try:
+        phieu_list = PhieuKiemKho.query.order_by(PhieuKiemKho.NgayTao.desc()).all()
+        
+        result = []
+        for phieu in phieu_list:
+            phieu_data = phieu.to_dict()
+            
+            # Get warehouse info
+            from app.models import KhoHang
+            kho = KhoHang.query.get(phieu.MaKho)
+            if kho:
+                phieu_data['warehouse'] = kho.to_dict()
+            
+            # Count items and discrepancies
+            bao_caos = BaoCao.query.filter_by(MaPhieu=phieu.MaPhieu).all()
+            phieu_data['total_items'] = len(bao_caos)
+            
+            discrepancies = 0
+            for bc in bao_caos:
+                batch = LoSP.query.filter_by(MaPhieuKiem=phieu.MaPhieu, MaBaoCao=bc.MaBaoCao).first()
+                if batch and bc.SLThucTe != batch.SLTon:
+                    discrepancies += 1
+            
+            phieu_data['total_discrepancies'] = discrepancies
+            
+            result.append(phieu_data)
+        
+        return success_response({
+            'inventories': result,
+            'total': len(result)
+        })
+    except Exception as e:
+        return error_response(f"Error getting inventories: {str(e)}", 500)
 
 
 @warehouse_inventory_bp.route('/inventory/<string:ma_phieu>', methods=['GET'])
@@ -177,11 +328,17 @@ def get_inventory_report(ma_phieu):
     if not phieu:
         return error_response("Phiếu kiểm kho not found", 404)
     
+    # Get warehouse info
+    from app.models import KhoHang, SanPham
+    kho = KhoHang.query.get(phieu.MaKho)
+    
     # Get all reports for this inventory
     bao_caos = BaoCao.query.filter_by(MaPhieu=ma_phieu).all()
     
     items = []
     total_discrepancy = 0
+    total_surplus = 0
+    total_shortage = 0
     
     for bao_cao in bao_caos:
         # Get batch info
@@ -191,14 +348,20 @@ def get_inventory_report(ma_phieu):
         ).first()
         
         if batch:
+            san_pham = SanPham.query.get(batch.MaSP)
+            
             sl_he_thong = batch.SLTon
             sl_thuc_te = bao_cao.SLThucTe
             chenh_lech = sl_thuc_te - sl_he_thong
             
             items.append({
                 'MaSP': batch.MaSP,
+                'TenSP': san_pham.TenSP if san_pham else batch.MaSP,
+                'DVT': san_pham.DVT if san_pham else '',
                 'MaLo': batch.MaLo,
                 'MaVach': batch.MaVach,
+                'NSX': batch.NSX.isoformat() if batch.NSX else None,
+                'HSD': batch.HSD.isoformat() if batch.HSD else None,
                 'SLHeThong': sl_he_thong,
                 'SLThucTe': sl_thuc_te,
                 'ChenhLech': chenh_lech,
@@ -206,16 +369,55 @@ def get_inventory_report(ma_phieu):
             })
             
             total_discrepancy += abs(chenh_lech)
+            if chenh_lech > 0:
+                total_surplus += chenh_lech
+            elif chenh_lech < 0:
+                total_shortage += abs(chenh_lech)
     
     return success_response({
         'phieu': phieu.to_dict(),
+        'warehouse': kho.to_dict() if kho else None,
         'items': items,
         'summary': {
             'total_items': len(items),
             'items_with_discrepancy': len([i for i in items if i['ChenhLech'] != 0]),
-            'total_discrepancy': total_discrepancy
+            'total_discrepancy': total_discrepancy,
+            'total_surplus': total_surplus,
+            'total_shortage': total_shortage
         }
     })
+
+
+@warehouse_inventory_bp.route('/inventory/<string:ma_phieu>', methods=['DELETE'])
+@jwt_required()
+@role_required('Quản lý')
+def delete_inventory(ma_phieu):
+    """Delete inventory check (Manager only)"""
+    phieu = PhieuKiemKho.query.get(ma_phieu)
+    if not phieu:
+        return error_response("Phiếu kiểm kho not found", 404)
+    
+    try:
+        # Remove batch references
+        LoSP.query.filter_by(MaPhieuKiem=ma_phieu).update({
+            'MaPhieuKiem': None,
+            'MaBaoCao': None
+        })
+        
+        # Delete reports
+        BaoCao.query.filter_by(MaPhieu=ma_phieu).delete()
+        
+        # Delete tao phieu record
+        TaoPhieu.query.filter_by(MaPhieuTao=ma_phieu).delete()
+        
+        # Delete the phieu
+        db.session.delete(phieu)
+        db.session.commit()
+        
+        return success_response(None, message="Inventory check deleted successfully")
+    except Exception as e:
+        db.session.rollback()
+        return error_response(f"Error deleting inventory: {str(e)}", 500)
 
 
 # =============================================

@@ -192,19 +192,34 @@ export const warehouseService = {
         return response.data
     },
 
-    // UC06: Inventory Check
+    // UC06: Inventory Check - Enhanced
     startInventory: async (data) => {
-        const response = await api.post('/warehouse/inventory/start', data)
+        const response = await api.post('/warehouse_inventory/inventory/start', data)
         return response.data
     },
 
     recordInventory: async (data) => {
-        const response = await api.post('/warehouse/inventory/record', data)
+        const response = await api.post('/warehouse_inventory/inventory/record', data)
+        return response.data
+    },
+
+    getInventories: async () => {
+        const response = await api.get('/warehouse_inventory/inventory')
         return response.data
     },
 
     getInventoryReport: async (id) => {
-        const response = await api.get(`/warehouse/inventory/${id}`)
+        const response = await api.get(`/warehouse_inventory/inventory/${id}`)
+        return response.data
+    },
+
+    deleteInventory: async (id) => {
+        const response = await api.delete(`/warehouse_inventory/inventory/${id}`)
+        return response.data
+    },
+
+    scanBatchForInventory: async (data) => {
+        const response = await api.post('/warehouse_inventory/inventory/scan-batch', data)
         return response.data
     },
 
