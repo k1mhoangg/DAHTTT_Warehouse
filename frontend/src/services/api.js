@@ -151,6 +151,11 @@ export const warehouseService = {
         return response.data
     },
 
+    scanBarcodeForTransfer: async (data) => {
+        const response = await api.post('/warehouse/transfer/scan-barcode', data)
+        return response.data
+    },
+
     exportWarehouse: async (data) => {
         const response = await api.post('/warehouse/export', data)
         return response.data
@@ -161,9 +166,29 @@ export const warehouseService = {
         return response.data
     },
 
-    // UC05: Transfer
+    // UC05: Transfer - Enhanced
     transferWarehouse: async (data) => {
         const response = await api.post('/warehouse/transfer', data)
+        return response.data
+    },
+
+    getTransfers: async () => {
+        const response = await api.get('/warehouse/transfer')
+        return response.data
+    },
+
+    getTransfer: async (id) => {
+        const response = await api.get(`/warehouse/transfer/${id}`)
+        return response.data
+    },
+
+    deleteTransfer: async (id) => {
+        const response = await api.delete(`/warehouse/transfer/${id}`)
+        return response.data
+    },
+
+    validateTransfer: async (data) => {
+        const response = await api.post('/warehouse/transfer/validate', data)
         return response.data
     },
 

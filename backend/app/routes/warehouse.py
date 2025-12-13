@@ -302,6 +302,8 @@ def transfer_warehouse():
     """
     Chuyển kho (UC05)
     
+    Chuyển TOÀN BỘ lô từ kho này sang kho khác (không chia lô)
+    
     Request body:
         {
             "KhoXuat": "string",
@@ -316,131 +318,203 @@ def transfer_warehouse():
             ]
         }
     """
-    data = request.get_json()
-    identity = get_jwt_identity()
-    
-    # Handle both string and dict identity formats
-    if isinstance(identity, str):
-        ma_nv = identity
-    elif isinstance(identity, dict):
-        ma_nv = identity.get('id') or identity.get('MaNV') or identity.get('username')
-    else:
-        ma_nv = str(identity)
-    
-    # Validate
-    if not data.get('KhoXuat') or not data.get('KhoNhap') or not data.get('items'):
-        return error_response("KhoXuat, KhoNhap, and items are required", 400)
-    
-    # Generate phiếu chuyển kho
-    ma_phieu_ck = generate_id('PCK', 6)
-    while PhieuChuyenKho.query.get(ma_phieu_ck):
-        ma_phieu_ck = generate_id('PCK', 6)
-    
-    phieu_ck = PhieuChuyenKho(
-        MaPhieu=ma_phieu_ck,
-        NgayTao=datetime.utcnow(),
-        MucDich=data.get('MucDich', 'Chuyển kho'),
-        KhoXuat=data['KhoXuat'],
-        KhoNhap=data['KhoNhap']
-    )
-    db.session.add(phieu_ck)
-    
-    # Generate phiếu xuất and phiếu nhập
-    ma_phieu_xuat = generate_id('PXK', 6)
-    ma_phieu_nhap = generate_id('PNK', 6)
-    
-    phieu_xuat = PhieuXuatKho(
-        MaPhieu=ma_phieu_xuat,
-        NgayTao=datetime.utcnow(),
-        MucDich=f"Xuất chuyển kho đến {data['KhoNhap']}",
-        MaThamChieu=ma_phieu_ck,
-        MaPhieuCK=ma_phieu_ck
-    )
-    
-    phieu_nhap = PhieuNhapKho(
-        MaPhieu=ma_phieu_nhap,
-        NgayTao=datetime.utcnow(),
-        MucDich=f"Nhập chuyển kho từ {data['KhoXuat']}",
-        MaThamChieu=ma_phieu_ck,
-        MaPhieuCK=ma_phieu_ck
-    )
-    
-    db.session.add(phieu_xuat)
-    db.session.add(phieu_nhap)
-    
-    # Process transfer
-    transferred_items = []
-    for item in data['items']:
-        ma_sp = item.get('MaSP')
-        ma_lo = item.get('MaLo')
-        so_luong = item.get('SoLuong', 0)
+    try:
+        data = request.get_json()
+        identity = get_jwt_identity()
         
-        # Find batch in source warehouse
-        batch_xuat = LoSP.query.filter_by(
-            MaSP=ma_sp,
-            MaLo=ma_lo,
-            MaKho=data['KhoXuat']
-        ).first()
-        
-        if not batch_xuat or batch_xuat.SLTon < so_luong:
-            db.session.rollback()
-            return error_response(
-                f"Insufficient stock in source warehouse for {ma_sp}/{ma_lo}",
-                400
-            )
-        
-        # Deduct from source
-        batch_xuat.SLTon -= so_luong
-        
-        # Add to destination (or create new batch)
-        batch_nhap = LoSP.query.filter_by(
-            MaSP=ma_sp,
-            MaLo=ma_lo,
-            MaKho=data['KhoNhap']
-        ).first()
-        
-        if batch_nhap:
-            batch_nhap.SLTon += so_luong
+        # Handle both string and dict identity formats
+        if isinstance(identity, str):
+            ma_nv = identity
+        elif isinstance(identity, dict):
+            ma_nv = identity.get('id') or identity.get('MaNV') or identity.get('username')
         else:
-            # Create new batch in destination warehouse
-            batch_nhap = LoSP(
+            ma_nv = str(identity)
+        
+        print(f"Transfer request data: {data}")
+        
+        # Validate
+        if not data.get('KhoXuat') or not data.get('KhoNhap') or not data.get('items'):
+            return error_response("KhoXuat, KhoNhap, and items are required", 400)
+        
+        if data['KhoXuat'] == data['KhoNhap']:
+            return error_response("Source and destination warehouses must be different", 400)
+        
+        # Check warehouses exist
+        kho_xuat = KhoHang.query.get(data['KhoXuat'])
+        kho_nhap = KhoHang.query.get(data['KhoNhap'])
+        
+        if not kho_xuat or not kho_nhap:
+            return error_response("Warehouse not found", 404)
+        
+        # Generate phiếu chuyển kho
+        ma_phieu_ck = generate_id('PCK', 6)
+        while PhieuChuyenKho.query.get(ma_phieu_ck):
+            ma_phieu_ck = generate_id('PCK', 6)
+        
+        phieu_ck = PhieuChuyenKho(
+            MaPhieu=ma_phieu_ck,
+            NgayTao=datetime.utcnow(),
+            MucDich=data.get('MucDich', 'Chuyển kho'),
+            KhoXuat=data['KhoXuat'],
+            KhoNhap=data['KhoNhap']
+        )
+        db.session.add(phieu_ck)
+        
+        # Generate phiếu xuất and phiếu nhập (for tracking only)
+        ma_phieu_xuat = generate_id('PXK', 6)
+        ma_phieu_nhap = generate_id('PNK', 6)
+        
+        phieu_xuat = PhieuXuatKho(
+            MaPhieu=ma_phieu_xuat,
+            NgayTao=datetime.utcnow(),
+            MucDich=f"Xuất chuyển kho đến {data['KhoNhap']}",
+            MaThamChieu=ma_phieu_ck,
+            MaPhieuCK=ma_phieu_ck
+        )
+        
+        phieu_nhap = PhieuNhapKho(
+            MaPhieu=ma_phieu_nhap,
+            NgayTao=datetime.utcnow(),
+            MucDich=f"Nhập chuyển kho từ {data['KhoXuat']}",
+            MaThamChieu=ma_phieu_ck,
+            MaPhieuCK=ma_phieu_ck
+        )
+        
+        db.session.add(phieu_xuat)
+        db.session.add(phieu_nhap)
+        
+        # Process transfer
+        transferred_items = []
+        
+        for item in data['items']:
+            ma_sp = item.get('MaSP')
+            ma_lo = item.get('MaLo')
+            so_luong = item.get('SoLuong', 0)
+            
+            print(f"Processing transfer: MaSP={ma_sp}, MaLo={ma_lo}, SoLuong={so_luong}")
+            
+            # Find batch in source warehouse
+            batch_xuat = LoSP.query.filter_by(
                 MaSP=ma_sp,
                 MaLo=ma_lo,
-                MaVach=batch_xuat.MaVach,  # Same barcode
-                NSX=batch_xuat.NSX,
-                HSD=batch_xuat.HSD,
-                SLTon=so_luong,
-                MaKho=data['KhoNhap'],
-                MaPhieuNK=ma_phieu_nhap
-            )
-            db.session.add(batch_nhap)
+                MaKho=data['KhoXuat']
+            ).first()
+            
+            if not batch_xuat:
+                db.session.rollback()
+                return error_response(
+                    f"Batch {ma_lo} not found for product {ma_sp} in warehouse {data['KhoXuat']}",
+                    404
+                )
+            
+            if batch_xuat.SLTon < so_luong:
+                db.session.rollback()
+                return error_response(
+                    f"Insufficient stock in source warehouse for {ma_sp}/{ma_lo}. Available: {batch_xuat.SLTon}, Requested: {so_luong}",
+                    400
+                )
+            
+            # Check if transferring entire batch or partial
+            if so_luong == batch_xuat.SLTon:
+                # Transfer entire batch - just update MaKho
+                print(f"Transferring entire batch {ma_lo}: {so_luong} units")
+                batch_xuat.MaKho = data['KhoNhap']
+                batch_xuat.MaPhieuNK = ma_phieu_nhap
+                # Keep existing MaPhieuXK reference
+                
+                transferred_items.append({
+                    'MaSP': ma_sp,
+                    'MaLo': ma_lo,
+                    'SoLuong': so_luong,
+                    'transfer_type': 'full',
+                    'from': data['KhoXuat'],
+                    'to': data['KhoNhap']
+                })
+            else:
+                # Partial transfer - need to split batch
+                print(f"Partial transfer batch {ma_lo}: {so_luong}/{batch_xuat.SLTon} units")
+                
+                # Deduct from source
+                batch_xuat.SLTon -= so_luong
+                batch_xuat.MaPhieuXK = ma_phieu_xuat
+                
+                # Check if batch already exists in destination
+                batch_nhap = LoSP.query.filter_by(
+                    MaSP=ma_sp,
+                    MaLo=ma_lo,
+                    MaKho=data['KhoNhap']
+                ).first()
+                
+                if batch_nhap:
+                    # Batch already exists in destination - just add quantity
+                    batch_nhap.SLTon += so_luong
+                    batch_nhap.MaPhieuNK = ma_phieu_nhap
+                else:
+                    # Create new batch in destination with DIFFERENT batch code to avoid PRIMARY KEY conflict
+                    # Generate new batch code with suffix
+                    import time
+                    new_ma_lo = f"{ma_lo}_CK{int(time.time() % 10000)}"
+                    
+                    # Ensure new batch code is unique
+                    while LoSP.query.filter_by(MaSP=ma_sp, MaLo=new_ma_lo).first():
+                        new_ma_lo = f"{ma_lo}_CK{int(time.time() % 10000)}"
+                    
+                    # Generate new barcode
+                    new_ma_vach = generate_barcode()
+                    while LoSP.query.filter_by(MaVach=new_ma_vach).first():
+                        new_ma_vach = generate_barcode()
+                    
+                    batch_nhap = LoSP(
+                        MaSP=ma_sp,
+                        MaLo=new_ma_lo,  # NEW batch code
+                        MaVach=new_ma_vach,  # NEW barcode
+                        NSX=batch_xuat.NSX,
+                        HSD=batch_xuat.HSD,
+                        SLTon=so_luong,
+                        MaKho=data['KhoNhap'],
+                        MaPhieuNK=ma_phieu_nhap
+                    )
+                    db.session.add(batch_nhap)
+                    
+                    print(f"Created new batch {new_ma_lo} in {data['KhoNhap']} with {so_luong} units")
+                
+                transferred_items.append({
+                    'MaSP': ma_sp,
+                    'MaLo': ma_lo,
+                    'new_MaLo': batch_nhap.MaLo if not LoSP.query.filter_by(MaSP=ma_sp, MaLo=ma_lo, MaKho=data['KhoNhap']).first() else ma_lo,
+                    'SoLuong': so_luong,
+                    'transfer_type': 'partial',
+                    'remaining_in_source': batch_xuat.SLTon,
+                    'from': data['KhoXuat'],
+                    'to': data['KhoNhap']
+                })
         
-        transferred_items.append({
-            'MaSP': ma_sp,
-            'MaLo': ma_lo,
-            'SoLuong': so_luong,
-            'from': data['KhoXuat'],
-            'to': data['KhoNhap']
-        })
-    
-    # Record who created
-    from app.models import TaoPhieu
-    tao_ck = TaoPhieu(MaNV=ma_nv, MaPhieuTao=ma_phieu_ck)
-    tao_xuat = TaoPhieu(MaNV=ma_nv, MaPhieuTao=ma_phieu_xuat)
-    tao_nhap = TaoPhieu(MaNV=ma_nv, MaPhieuTao=ma_phieu_nhap)
-    
-    db.session.add(tao_ck)
-    db.session.add(tao_xuat)
-    db.session.add(tao_nhap)
-    
-    db.session.commit()
-    
-    return success_response({
-        'phieu_chuyen_kho': phieu_ck.to_dict(),
-        'phieu_xuat': phieu_xuat.to_dict(),
-        'phieu_nhap': phieu_nhap.to_dict(),
-        'transferred_items': transferred_items
-    }, message="Transfer successful", status=201)
+        # Record who created
+        tao_ck = TaoPhieu(MaNV=ma_nv, MaPhieuTao=ma_phieu_ck)
+        tao_xuat = TaoPhieu(MaNV=ma_nv, MaPhieuTao=ma_phieu_xuat)
+        tao_nhap = TaoPhieu(MaNV=ma_nv, MaPhieuTao=ma_phieu_nhap)
+        
+        db.session.add(tao_ck)
+        db.session.add(tao_xuat)
+        db.session.add(tao_nhap)
+        
+        db.session.commit()
+        
+        print(f"Transfer successful: {len(transferred_items)} items transferred")
+        
+        return success_response({
+            'phieu_chuyen_kho': phieu_ck.to_dict(),
+            'phieu_xuat': phieu_xuat.to_dict(),
+            'phieu_nhap': phieu_nhap.to_dict(),
+            'transferred_items': transferred_items
+        }, message="Transfer successful", status=201)
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Transfer error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return error_response(f"Error creating transfer: {str(e)}", 500)
 
 
 @warehouse_bp.route('/export/scan-barcode', methods=['POST'])
@@ -1017,4 +1091,434 @@ def preview_import():
             'total_quantity': sum(item.get('SoLuong', 0) for item in data['items']),
             'warehouse': kho.to_dict()
         }
+    })
+
+
+# =============================================
+# UC05: CHUYỂN KHO - ENHANCED
+# =============================================
+
+@warehouse_bp.route('/transfer', methods=['GET'])
+@jwt_required()
+def get_transfers():
+    """Get all transfer receipts with proper item details"""
+    try:
+        phieu_list = PhieuChuyenKho.query.order_by(PhieuChuyenKho.NgayTao.desc()).all()
+        
+        result = []
+        for phieu in phieu_list:
+            phieu_data = phieu.to_dict()
+            
+            # Get related export and import receipts
+            phieu_xuat = PhieuXuatKho.query.filter_by(MaPhieuCK=phieu.MaPhieu).first()
+            phieu_nhap = PhieuNhapKho.query.filter_by(MaPhieuCK=phieu.MaPhieu).first()
+            
+            phieu_data['items'] = []
+            
+            # Strategy 1: Get items from export receipt (partial transfers)
+            if phieu_xuat:
+                batches_xuat = LoSP.query.filter_by(MaPhieuXK=phieu_xuat.MaPhieu).all()
+                
+                for batch in batches_xuat:
+                    san_pham = SanPham.query.get(batch.MaSP)
+                    if san_pham:
+                        # This is a partial transfer - batch still in source warehouse
+                        phieu_data['items'].append({
+                            'MaSP': batch.MaSP,
+                            'TenSP': san_pham.TenSP,
+                            'DVT': san_pham.DVT,
+                            'MaLo': batch.MaLo,
+                            'MaVach': batch.MaVach,
+                            'NSX': batch.NSX.isoformat() if batch.NSX else None,
+                            'HSD': batch.HSD.isoformat() if batch.HSD else None,
+                            'SoLuong': 0,  # Will be calculated from destination
+                            'transfer_type': 'partial'
+                        })
+            
+            # Strategy 2: Get items from import receipt (for both full and partial)
+            if phieu_nhap:
+                batches_nhap = LoSP.query.filter_by(MaPhieuNK=phieu_nhap.MaPhieu).all()
+                
+                for batch in batches_nhap:
+                    san_pham = SanPham.query.get(batch.MaSP)
+                    if san_pham:
+                        # Check if this batch already in items (from partial transfer)
+                        existing_item = next(
+                            (item for item in phieu_data['items'] 
+                             if item['MaSP'] == batch.MaSP and item['MaLo'].startswith(batch.MaLo.split('_CK')[0])),
+                            None
+                        )
+                        
+                        if existing_item:
+                            # Update quantity for partial transfer
+                            existing_item['SoLuong'] = batch.SLTon
+                            existing_item['destination_MaLo'] = batch.MaLo
+                            existing_item['destination_MaVach'] = batch.MaVach
+                        else:
+                            # This is a full transfer - add new item
+                            phieu_data['items'].append({
+                                'MaSP': batch.MaSP,
+                                'TenSP': san_pham.TenSP,
+                                'DVT': san_pham.DVT,
+                                'MaLo': batch.MaLo,
+                                'MaVach': batch.MaVach,
+                                'NSX': batch.NSX.isoformat() if batch.NSX else None,
+                                'HSD': batch.HSD.isoformat() if batch.HSD else None,
+                                'SoLuong': batch.SLTon,
+                                'transfer_type': 'full'
+                            })
+            
+            # If no items found from receipts, try to find moved batches
+            if not phieu_data['items']:
+                # Look for batches that were moved to destination warehouse
+                # and have this transfer as reference
+                moved_batches = LoSP.query.filter(
+                    LoSP.MaKho == phieu.KhoNhap,
+                    LoSP.MaPhieuNK == phieu_nhap.MaPhieu if phieu_nhap else None
+                ).all()
+                
+                for batch in moved_batches:
+                    san_pham = SanPham.query.get(batch.MaSP)
+                    if san_pham:
+                        phieu_data['items'].append({
+                            'MaSP': batch.MaSP,
+                            'TenSP': san_pham.TenSP,
+                            'DVT': san_pham.DVT,
+                            'MaLo': batch.MaLo,
+                            'MaVach': batch.MaVach,
+                            'NSX': batch.NSX.isoformat() if batch.NSX else None,
+                            'HSD': batch.HSD.isoformat() if batch.HSD else None,
+                            'SoLuong': batch.SLTon,
+                            'transfer_type': 'full'
+                        })
+            
+            result.append(phieu_data)
+        
+        return success_response({
+            'transfers': result,
+            'total': len(result)
+        })
+    except Exception as e:
+        print(f"Error getting transfers: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return error_response(f"Error getting transfers: {str(e)}", 500)
+
+
+@warehouse_bp.route('/transfer/<string:ma_phieu>', methods=['GET'])
+@jwt_required()
+def get_transfer(ma_phieu):
+    """Get specific transfer receipt details with comprehensive item information"""
+    phieu = PhieuChuyenKho.query.get(ma_phieu)
+    if not phieu:
+        return error_response("Transfer receipt not found", 404)
+    
+    phieu_data = phieu.to_dict()
+    
+    # Get related receipts
+    phieu_xuat = PhieuXuatKho.query.filter_by(MaPhieuCK=ma_phieu).first()
+    phieu_nhap = PhieuNhapKho.query.filter_by(MaPhieuCK=ma_phieu).first()
+    
+    if phieu_xuat:
+        phieu_data['phieu_xuat'] = phieu_xuat.to_dict()
+    
+    if phieu_nhap:
+        phieu_data['phieu_nhap'] = phieu_nhap.to_dict()
+    
+    # Build comprehensive items list
+    phieu_data['items'] = []
+    items_map = {}  # Use dict to avoid duplicates
+    
+    # Get items from destination warehouse (most reliable)
+    if phieu_nhap:
+        batches_nhap = LoSP.query.filter_by(MaPhieuNK=phieu_nhap.MaPhieu).all()
+        
+        for batch in batches_nhap:
+            san_pham = SanPham.query.get(batch.MaSP)
+            if san_pham:
+                key = f"{batch.MaSP}_{batch.MaLo.split('_CK')[0]}"  # Remove _CK suffix for grouping
+                
+                items_map[key] = {
+                    'MaSP': batch.MaSP,
+                    'TenSP': san_pham.TenSP,
+                    'DVT': san_pham.DVT,
+                    'MaLo': batch.MaLo.split('_CK')[0],  # Original batch code
+                    'MaVach': batch.MaVach,
+                    'NSX': batch.NSX.isoformat() if batch.NSX else None,
+                    'HSD': batch.HSD.isoformat() if batch.HSD else None,
+                    'SoLuong': batch.SLTon,
+                    'CurrentWarehouse': phieu.KhoNhap,
+                    'DestinationMaLo': batch.MaLo,  # May have _CK suffix
+                    'DestinationMaVach': batch.MaVach,
+                    'transfer_type': 'full' if '_CK' not in batch.MaLo else 'partial'
+                }
+    
+    # Also check source warehouse for partial transfers
+    if phieu_xuat:
+        batches_xuat = LoSP.query.filter_by(MaPhieuXK=phieu_xuat.MaPhieu).all()
+        
+        for batch in batches_xuat:
+            san_pham = SanPham.query.get(batch.MaSP)
+            if san_pham:
+                key = f"{batch.MaSP}_{batch.MaLo}"
+                
+                if key not in items_map:
+                    # Batch not found in destination, check if it was fully transferred
+                    moved_batch = LoSP.query.filter_by(
+                        MaSP=batch.MaSP,
+                        MaLo=batch.MaLo,
+                        MaKho=phieu.KhoNhap
+                    ).first()
+                    
+                    if moved_batch:
+                        items_map[key] = {
+                            'MaSP': batch.MaSP,
+                            'TenSP': san_pham.TenSP,
+                            'DVT': san_pham.DVT,
+                            'MaLo': batch.MaLo,
+                            'MaVach': batch.MaVach,
+                            'NSX': batch.NSX.isoformat() if batch.NSX else None,
+                            'HSD': batch.HSD.isoformat() if batch.HSD else None,
+                            'SoLuong': moved_batch.SLTon,
+                            'CurrentWarehouse': phieu.KhoNhap,
+                            'transfer_type': 'full'
+                        }
+                else:
+                    # Update with source warehouse info for partial transfers
+                    items_map[key]['SourceMaLo'] = batch.MaLo
+                    items_map[key]['RemainingInSource'] = batch.SLTon
+    
+    phieu_data['items'] = list(items_map.values())
+    
+    # Add summary statistics
+    phieu_data['summary'] = {
+        'total_items': len(phieu_data['items']),
+        'total_quantity': sum(item['SoLuong'] for item in phieu_data['items']),
+        'full_transfers': len([i for i in phieu_data['items'] if i['transfer_type'] == 'full']),
+        'partial_transfers': len([i for i in phieu_data['items'] if i['transfer_type'] == 'partial'])
+    }
+    
+    return success_response(phieu_data)
+
+
+
+@warehouse_bp.route('/transfer/<string:ma_phieu>', methods=['DELETE'])
+@jwt_required()
+@role_required('Quản lý')
+def delete_transfer(ma_phieu):
+    """Delete transfer receipt (Manager only) - Rollback both warehouses"""
+    phieu = PhieuChuyenKho.query.get(ma_phieu)
+    if not phieu:
+        return error_response("Transfer receipt not found", 404)
+    
+    try:
+        # Get related receipts
+        phieu_xuat = PhieuXuatKho.query.filter_by(MaPhieuCK=ma_phieu).first()
+        phieu_nhap = PhieuNhapKho.query.filter_by(MaPhieuCK=ma_phieu).first()
+        
+        # Rollback stock changes
+        if phieu_xuat:
+            LoSP.query.filter_by(MaPhieuXK=phieu_xuat.MaPhieu).update({'MaPhieuXK': None})
+            TaoPhieu.query.filter_by(MaPhieuTao=phieu_xuat.MaPhieu).delete()
+            db.session.delete(phieu_xuat)
+        
+        if phieu_nhap:
+            LoSP.query.filter_by(MaPhieuNK=phieu_nhap.MaPhieu).delete()
+            TaoPhieu.query.filter_by(MaPhieuTao=phieu_nhap.MaPhieu).delete()
+            db.session.delete(phieu_nhap)
+        
+        # Delete tao phieu records
+        TaoPhieu.query.filter_by(MaPhieuTao=ma_phieu).delete()
+        
+        # Delete the transfer receipt
+        db.session.delete(phieu)
+        db.session.commit()
+        
+        return success_response(None, message="Transfer receipt deleted successfully")
+    except Exception as e:
+        db.session.rollback()
+        return error_response(f"Error deleting transfer receipt: {str(e)}", 500)
+
+
+@warehouse_bp.route('/transfer/validate', methods=['POST'])
+@jwt_required()
+def validate_transfer():
+    """
+    Validate transfer before submission
+    
+    Request body:
+        {
+            "KhoXuat": "string",
+            "KhoNhap": "string",
+            "items": [
+                {
+                    "MaSP": "string",
+                    "MaLo": "string",
+                    "SoLuong": int
+                }
+            ]
+        }
+    """
+    data = request.get_json()
+    
+    kho_xuat = data.get('KhoXuat')
+    kho_nhap = data.get('KhoNhap')
+    items = data.get('items', [])
+    
+    if not kho_xuat or not kho_nhap:
+        return error_response("KhoXuat and KhoNhap are required", 400)
+    
+    if kho_xuat == kho_nhap:
+        return error_response("Source and destination warehouses must be different", 400)
+    
+    warnings = []
+    errors = []
+    validated_items = []
+    
+    for idx, item in enumerate(items):
+        ma_sp = item.get('MaSP')
+        ma_lo = item.get('MaLo')
+        so_luong = item.get('SoLuong', 0)
+        
+        # Validate batch in source warehouse
+        batch = LoSP.query.filter_by(
+            MaSP=ma_sp,
+            MaLo=ma_lo,
+            MaKho=kho_xuat
+        ).first()
+        
+        if not batch:
+            errors.append(f"Dòng {idx + 1}: Lô {ma_lo} không tồn tại trong kho {kho_xuat}")
+            continue
+        
+        if batch.SLTon < so_luong:
+            errors.append(f"Dòng {idx + 1}: Không đủ tồn kho. Có: {batch.SLTon}, Yêu cầu: {so_luong}")
+            continue
+        
+        # Check expiry
+        if batch.HSD:
+            days_to_expiry = (batch.HSD - datetime.utcnow().date()).days
+            if days_to_expiry < 0:
+                warnings.append(f"Dòng {idx + 1}: Lô đã hết hạn ({batch.HSD})")
+            elif days_to_expiry <= 7:
+                warnings.append(f"Dòng {idx + 1}: Lô sắp hết hạn trong {days_to_expiry} ngày")
+        
+        san_pham = SanPham.query.get(ma_sp)
+        validated_items.append({
+            'MaSP': ma_sp,
+            'TenSP': san_pham.TenSP if san_pham else ma_sp,
+            'MaLo': ma_lo,
+            'SoLuong': so_luong,
+            'SLTon': batch.SLTon,
+            'NSX': batch.NSX.isoformat() if batch.NSX else None,
+            'HSD': batch.HSD.isoformat() if batch.HSD else None,
+            'status': 'ok'
+        })
+    
+    return success_response({
+        'valid': len(errors) == 0,
+        'warnings': warnings,
+        'errors': errors,
+        'items': validated_items,
+        'summary': {
+            'total_items': len(items),
+            'total_quantity': sum(item.get('SoLuong', 0) for item in items),
+            'source_warehouse': kho_xuat,
+            'destination_warehouse': kho_nhap
+        }
+    })
+
+
+@warehouse_bp.route('/transfer/scan-barcode', methods=['POST'])
+@jwt_required()
+def scan_barcode_for_transfer():
+    """
+    Scan barcode for warehouse transfer (UC05)
+    
+    Khác với export: cho phép quét hàng hết hạn, hàng lỗi
+    
+    Request body:
+        {
+            "MaVach": "string",
+            "MaKho": "string",
+            "MaSP": "string" (optional - for validation)
+        }
+    
+    Response: Batch information for scanned barcode
+    """
+    data = request.get_json()
+    
+    ma_vach = data.get('MaVach')
+    ma_kho = data.get('MaKho')
+    ma_sp = data.get('MaSP')
+    
+    if not ma_vach or not ma_kho:
+        return error_response("MaVach and MaKho are required", 400)
+    
+    # Find batch by barcode
+    query = LoSP.query.filter_by(MaVach=ma_vach, MaKho=ma_kho)
+    
+    # Add product filter if provided
+    if ma_sp:
+        query = query.filter_by(MaSP=ma_sp)
+    
+    batch = query.first()
+    
+    if not batch:
+        if ma_sp:
+            return error_response(
+                f"Barcode {ma_vach} not found for product {ma_sp} in warehouse {ma_kho}", 
+                404
+            )
+        else:
+            return error_response(
+                f"Barcode {ma_vach} not found in warehouse {ma_kho}", 
+                404
+            )
+    
+    # Check if batch has stock
+    if batch.SLTon <= 0:
+        return error_response(
+            f"Batch with barcode {ma_vach} has no available stock", 
+            400
+        )
+    
+    # Check expiry status (but don't block)
+    is_expired = False
+    days_to_expiry = None
+    warnings = []
+    
+    if batch.HSD:
+        days_to_expiry = (batch.HSD - datetime.utcnow().date()).days
+        is_expired = days_to_expiry < 0
+        
+        if is_expired:
+            warnings.append(f"Lô hàng đã hết hạn từ ngày {batch.HSD}")
+        elif days_to_expiry <= 7:
+            warnings.append(f"Lô hàng sắp hết hạn trong {days_to_expiry} ngày")
+    
+    # Get product info
+    san_pham = SanPham.query.get(batch.MaSP)
+    
+    # Calculate status
+    status = 'normal'
+    if days_to_expiry is not None:
+        if is_expired:
+            status = 'expired'
+        elif days_to_expiry <= 7:
+            status = 'critical'
+        elif days_to_expiry <= 30:
+            status = 'warning'
+    
+    return success_response({
+        'batch_info': {
+            **batch.to_dict(),
+            'days_to_expiry': days_to_expiry,
+            'status': status,
+            'is_expired': is_expired,
+            'is_transferable': batch.SLTon > 0  # Có thể chuyển nếu còn tồn kho
+        },
+        'product_info': san_pham.to_dict() if san_pham else None,
+        'scan_timestamp': datetime.utcnow().isoformat(),
+        'warnings': warnings
     })
