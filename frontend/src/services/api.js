@@ -276,28 +276,63 @@ export const warehouseService = {
 // =============================================
 
 export const orderService = {
+    // Get all suppliers
+    getSuppliers: async () => {
+        const response = await api.get('/orders/suppliers')
+        return response.data
+    },
+
+    // Get supplier details
+    getSupplier: async (ten) => {
+        const response = await api.get(`/orders/suppliers/${encodeURIComponent(ten)}`)
+        return response.data
+    },
+
+    // Get order suggestions based on low stock
+    getSuggestOrder: async () => {
+        const response = await api.get('/orders/suggest-order')
+        return response.data
+    },
+
+    // Get all orders with filters
     getOrders: async (params) => {
-        const response = await api.get('/orders', { params })
+        const response = await api.get('/orders/orders', { params })
         return response.data
     },
 
+    // Get order details
     getOrder: async (id) => {
-        const response = await api.get(`/orders/${id}`)
+        const response = await api.get(`/orders/orders/${id}`)
         return response.data
     },
 
+    // Create new order
     createOrder: async (data) => {
-        const response = await api.post('/orders', data)
+        const response = await api.post('/orders/orders', data)
         return response.data
     },
 
-    approveOrder: async (id) => {
-        const response = await api.put(`/orders/${id}/approve`)
+    // Approve order (Manager only)
+    approveOrder: async (id, data) => {
+        const response = await api.post(`/orders/orders/${id}/approve`, data)
         return response.data
     },
 
+    // Reject order (Manager only)
     rejectOrder: async (id, reason) => {
-        const response = await api.put(`/orders/${id}/reject`, { reason })
+        const response = await api.post(`/orders/orders/${id}/reject`, { LyDo: reason })
+        return response.data
+    },
+
+    // Delete order (Manager only)
+    deleteOrder: async (id) => {
+        const response = await api.delete(`/orders/orders/${id}`)
+        return response.data
+    },
+
+    // Get order statistics
+    getOrderStatistics: async () => {
+        const response = await api.get('/orders/orders/statistics')
         return response.data
     },
 }
