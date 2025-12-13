@@ -1,9 +1,10 @@
-from flask import Flask
+from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from app.config import config
+import traceback
 
 db = SQLAlchemy()
 migrate = Migrate()
@@ -27,6 +28,7 @@ def create_app(config_name="default"):
         auth_bp,
         product_bp,
         warehouse_bp,
+        warehouse_inventory_bp,  # Add this
         order_bp,
         report_bp,
         sales_bp,
@@ -36,6 +38,7 @@ def create_app(config_name="default"):
     app.register_blueprint(auth_bp, url_prefix="/api/auth")
     app.register_blueprint(product_bp, url_prefix="/api/products")
     app.register_blueprint(warehouse_bp, url_prefix="/api/warehouse")
+    app.register_blueprint(warehouse_inventory_bp, url_prefix="/api/warehouse_inventory")  # Add this line
     app.register_blueprint(order_bp, url_prefix="/api/orders")
     app.register_blueprint(report_bp, url_prefix="/api/reports")
     app.register_blueprint(sales_bp, url_prefix="/api/sales")
@@ -44,5 +47,19 @@ def create_app(config_name="default"):
     # Register error handlers
     from app.utils.error_handlers import register_error_handlers
     register_error_handlers(app)
+    
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        """Global exception handler"""
+        # Log the error
+        app.logger.error(f"Unhandled exception: {str(e)}")
+        app.logger.error(traceback.format_exc())
+        
+        # Return JSON response
+        return jsonify({
+            'success': False,
+            'message': f"Internal server error: {str(e)}",
+            'error': str(e)
+        }), 500
     
     return app

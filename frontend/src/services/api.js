@@ -72,42 +72,154 @@ export const productService = {
 // =============================================
 
 export const warehouseService = {
-    // UC03: Import
+    // Warehouse data
+    getWarehouses: async () => {
+        const response = await api.get('/warehouse/warehouses')
+        return response.data
+    },
+
+    getWarehouseInventory: async (maKho, params) => {
+        const response = await api.get(`/warehouse/warehouses/${maKho}/inventory`, { params })
+        return response.data
+    },
+
+    getBatches: async (params) => {
+        const response = await api.get('/warehouse/batches', { params })
+        return response.data
+    },
+
+    // UC03: Import - Enhanced
+    getImports: async () => {
+        const response = await api.get('/warehouse/import')
+        return response.data
+    },
+
+    getImport: async (id) => {
+        const response = await api.get(`/warehouse/import/${id}`)
+        return response.data
+    },
+
     importWarehouse: async (data) => {
         const response = await api.post('/warehouse/import', data)
         return response.data
     },
 
-    // UC04: Export (FEFO)
+    deleteImport: async (id) => {
+        const response = await api.delete(`/warehouse/import/${id}`)
+        return response.data
+    },
+
+    // New endpoints for UC03
+    getSuppliersForImport: async () => {
+        const response = await api.get('/warehouse/import/suppliers')
+        return response.data
+    },
+
+    validateBatchCode: async (data) => {
+        const response = await api.post('/warehouse/import/validate-batch', data)
+        return response.data
+    },
+
+    generateBatchCode: async (data) => {
+        const response = await api.post('/warehouse/import/generate-batch', data)
+        return response.data
+    },
+
+    previewImport: async (data) => {
+        const response = await api.post('/warehouse/import/preview', data)
+        return response.data
+    },
+
+    // UC04: Export
+    getExports: async () => {
+        const response = await api.get('/warehouse/export')
+        return response.data
+    },
+
+    getExport: async (id) => {
+        const response = await api.get(`/warehouse/export/${id}`)
+        return response.data
+    },
+
+    getFEFOBatches: async (data) => {
+        const response = await api.post('/warehouse/export/fefo-batches', data)
+        return response.data
+    },
+
+    scanBarcodeForExport: async (data) => {
+        const response = await api.post('/warehouse/export/scan-barcode', data)
+        return response.data
+    },
+
+    scanBarcodeForTransfer: async (data) => {
+        const response = await api.post('/warehouse/transfer/scan-barcode', data)
+        return response.data
+    },
+
     exportWarehouse: async (data) => {
         const response = await api.post('/warehouse/export', data)
         return response.data
     },
 
-    suggestFEFO: async (data) => {
-        const response = await api.post('/warehouse/export/suggest-fefo', data)
+    deleteExport: async (id) => {
+        const response = await api.delete(`/warehouse/export/${id}`)
         return response.data
     },
 
-    // UC05: Transfer
+    // UC05: Transfer - Enhanced
     transferWarehouse: async (data) => {
         const response = await api.post('/warehouse/transfer', data)
         return response.data
     },
 
-    // UC06: Inventory Check
+    getTransfers: async () => {
+        const response = await api.get('/warehouse/transfer')
+        return response.data
+    },
+
+    getTransfer: async (id) => {
+        const response = await api.get(`/warehouse/transfer/${id}`)
+        return response.data
+    },
+
+    deleteTransfer: async (id) => {
+        const response = await api.delete(`/warehouse/transfer/${id}`)
+        return response.data
+    },
+
+    validateTransfer: async (data) => {
+        const response = await api.post('/warehouse/transfer/validate', data)
+        return response.data
+    },
+
+    // UC06: Inventory Check - Enhanced
     startInventory: async (data) => {
-        const response = await api.post('/warehouse/inventory/start', data)
+        const response = await api.post('/warehouse_inventory/inventory/start', data)
         return response.data
     },
 
     recordInventory: async (data) => {
-        const response = await api.post('/warehouse/inventory/record', data)
+        const response = await api.post('/warehouse_inventory/inventory/record', data)
+        return response.data
+    },
+
+    getInventories: async () => {
+        const response = await api.get('/warehouse_inventory/inventory')
         return response.data
     },
 
     getInventoryReport: async (id) => {
-        const response = await api.get(`/warehouse/inventory/${id}`)
+        const response = await api.get(`/warehouse_inventory/inventory/${id}`)
+        return response.data
+    },
+
+    deleteInventory: async (id) => {
+        const response = await api.delete(`/warehouse_inventory/inventory/${id}`)
+        return response.data
+    },
+
+    scanBatchForInventory: async (data) => {
+        const response = await api.post('/warehouse_inventory/inventory/scan-batch', data)
         return response.data
     },
 

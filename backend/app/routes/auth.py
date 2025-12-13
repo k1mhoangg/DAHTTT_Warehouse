@@ -154,7 +154,8 @@ def change_password():
         }
     """
     data = request.get_json()
-    claims = get_jwt_identity()
+    # claims = get_jwt_identity()
+    claims = get_jwt()
     
     old_password = data.get('old_password')
     new_password = data.get('new_password')
@@ -172,7 +173,8 @@ def change_password():
         }), 400
     
     # Get user
-    user_id = claims.get('id')
+    # user_id = claims.get('id')
+    user_id = get_jwt_identity()
     user_type = claims.get('type')
     
     user = None
