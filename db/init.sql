@@ -207,9 +207,18 @@ CREATE TABLE XuLyTraHang (
 CREATE TABLE DatHang (
     TenNCC VARCHAR(100),
     MaNV VARCHAR(20),
+    MaDonHang VARCHAR(20),
+    NgayDat DATETIME DEFAULT CURRENT_TIMESTAMP,
+    MucDich VARCHAR(200),
+    TrangThai ENUM('Chờ duyệt', 'Đã duyệt', 'Từ chối') DEFAULT 'Chờ duyệt',
+    MaNVDuyet VARCHAR(20),
+    NgayDuyet DATETIME,
+    LyDoTuChoi TEXT,
+    ChiTietDonHang JSON,
     PRIMARY KEY (TenNCC, MaNV),
     FOREIGN KEY (TenNCC) REFERENCES NhaCungCap(Ten),
-    FOREIGN KEY (MaNV) REFERENCES NhanVienKho(MaNV)
+    FOREIGN KEY (MaNV) REFERENCES NhanVienKho(MaNV),
+    FOREIGN KEY (MaNVDuyet) REFERENCES NhanVienKho(MaNV)
 );
 
 -- Lô Thuốc từ Nhà Cung Cấp
@@ -352,12 +361,26 @@ INSERT INTO DuyetPhieu (MaNV, MaPhieuDuyet) VALUES
 ('NVK001', 'PXK001'),
 ('NVK001', 'PXK002');
 
--- Thêm DatHang
-INSERT INTO DatHang (TenNCC, MaNV) VALUES
-('Công ty TNHH Thực phẩm Sạch', 'NVK002'),
-('Công ty CP Nước Giải Khát Việt Nam', 'NVK002'),
-('Công ty TNHH Đồ Dùng Gia Đình', 'NVK003'),
-('Công ty CP Vệ Sinh Môi Trường', 'NVK003');
+-- Thêm DatHang (Bao gồm dữ liệu cho UC02)
+INSERT INTO DatHang (TenNCC, MaNV, MaDonHang, NgayDat, MucDich, TrangThai, MaNVDuyet, NgayDuyet, ChiTietDonHang) VALUES
+('Công ty TNHH Thực phẩm Sạch', 'NVK002', 'DH000001', '2024-11-28 10:00:00', 'Đặt hàng định kỳ', 'Đã duyệt', 'NVK001', '2024-11-28 14:30:00', 
+    JSON_ARRAY(
+        JSON_OBJECT('MaSP', 'SP001', 'TenSP', 'Gạo ST25', 'SoLuong', 500, 'DonGia', 23000),
+        JSON_OBJECT('MaSP', 'SP002', 'TenSP', 'Dầu ăn Simply', 'SoLuong', 200, 'DonGia', 42000)
+    )),
+('Công ty CP Nước Giải Khát Việt Nam', 'NVK002', 'DH000002', '2024-12-01 09:15:00', 'Đặt hàng định kỳ', 'Đã duyệt', 'NVK001', '2024-12-01 15:00:00',
+    JSON_ARRAY(
+        JSON_OBJECT('MaSP', 'SP003', 'TenSP', 'Nước ngọt Coca Cola', 'SoLuong', 800, 'DonGia', 10500),
+        JSON_OBJECT('MaSP', 'SP004', 'TenSP', 'Sữa tươi Vinamilk', 'SoLuong', 600, 'DonGia', 7500)
+    )),
+('Công ty TNHH Đồ Dùng Gia Đình', 'NVK003', 'DH000003', '2024-12-03 11:20:00', 'Bổ sung hàng', 'Đã duyệt', 'NVK001', '2024-12-03 16:45:00',
+    JSON_ARRAY(
+        JSON_OBJECT('MaSP', 'SP006', 'TenSP', 'Nước rửa chén Sunlight', 'SoLuong', 150, 'DonGia', 33000)
+    )),
+('Công ty CP Vệ Sinh Môi Trường', 'NVK003', 'DH000004', '2024-12-05 08:30:00', 'Đặt hàng khẩn cấp', 'Chờ duyệt', NULL, NULL,
+    JSON_ARRAY(
+        JSON_OBJECT('MaSP', 'SP007', 'TenSP', 'Giấy vệ sinh Pulppy', 'SoLuong', 500, 'DonGia', 5500)
+    ));
 
 -- =============================================
 -- CÁC INDEX ĐỂ TỐI ƯU TRUY VẤN
@@ -369,6 +392,8 @@ CREATE INDEX idx_hoadon_ngay ON HoaDon(NgayTao);
 CREATE INDEX idx_phieunhap_ngay ON PhieuNhapKho(NgayTao);
 CREATE INDEX idx_phieuxuat_ngay ON PhieuXuatKho(NgayTao);
 CREATE INDEX idx_sanpham_loai ON SanPham(LoaiSP);
+CREATE INDEX idx_dathang_trangthai ON DatHang(TrangThai);
+CREATE INDEX idx_dathang_ngaydat ON DatHang(NgayDat);
 
 -- =============================================
 -- KẾT THÚC KHỞI TẠO DATABASE
