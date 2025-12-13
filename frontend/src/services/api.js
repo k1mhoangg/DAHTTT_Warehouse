@@ -223,15 +223,50 @@ export const warehouseService = {
         return response.data
     },
 
-    // UC07: Adjustment
-    adjustInventory: async (data) => {
-        const response = await api.post('/warehouse/adjustment', data)
+    // UC07: Adjustment - Enhanced
+    getAdjustableInventories: async () => {
+        const response = await api.get('/warehouse_inventory/adjustment')
         return response.data
     },
 
-    // UC09: Discard
+    previewAdjustment: async (data) => {
+        const response = await api.post('/warehouse_inventory/adjustment/preview', data)
+        return response.data
+    },
+
+    adjustInventory: async (data) => {
+        const response = await api.post('/warehouse_inventory/adjustment', data)
+        return response.data
+    },
+
+    getAdjustmentHistory: async () => {
+        const response = await api.get('/warehouse_inventory/adjustment/history')
+        return response.data
+    },
+
+    // UC09: Discard - Enhanced
+    getErrorWarehouseInventory: async () => {
+        const response = await api.get('/warehouse_inventory/discard/error-warehouse-inventory')
+        return response.data
+    },
+
+    validateDiscard: async (data) => {
+        const response = await api.post('/warehouse_inventory/discard/validate', data)
+        return response.data
+    },
+
     discardGoods: async (data) => {
-        const response = await api.post('/warehouse/discard', data)
+        const response = await api.post('/warehouse_inventory/discard', data)
+        return response.data
+    },
+
+    getDiscardHistory: async () => {
+        const response = await api.get('/warehouse_inventory/discard/history')
+        return response.data
+    },
+
+    getDiscardDetail: async (id) => {
+        const response = await api.get(`/warehouse_inventory/discard/${id}`)
         return response.data
     },
 }
@@ -241,28 +276,63 @@ export const warehouseService = {
 // =============================================
 
 export const orderService = {
+    // Get all suppliers
+    getSuppliers: async () => {
+        const response = await api.get('/orders/suppliers')
+        return response.data
+    },
+
+    // Get supplier details
+    getSupplier: async (ten) => {
+        const response = await api.get(`/orders/suppliers/${encodeURIComponent(ten)}`)
+        return response.data
+    },
+
+    // Get order suggestions based on low stock
+    getSuggestOrder: async () => {
+        const response = await api.get('/orders/suggest-order')
+        return response.data
+    },
+
+    // Get all orders with filters
     getOrders: async (params) => {
-        const response = await api.get('/orders', { params })
+        const response = await api.get('/orders/orders', { params })
         return response.data
     },
 
+    // Get order details
     getOrder: async (id) => {
-        const response = await api.get(`/orders/${id}`)
+        const response = await api.get(`/orders/orders/${id}`)
         return response.data
     },
 
+    // Create new order
     createOrder: async (data) => {
-        const response = await api.post('/orders', data)
+        const response = await api.post('/orders/orders', data)
         return response.data
     },
 
-    approveOrder: async (id) => {
-        const response = await api.put(`/orders/${id}/approve`)
+    // Approve order (Manager only)
+    approveOrder: async (id, data) => {
+        const response = await api.post(`/orders/orders/${id}/approve`, data)
         return response.data
     },
 
+    // Reject order (Manager only)
     rejectOrder: async (id, reason) => {
-        const response = await api.put(`/orders/${id}/reject`, { reason })
+        const response = await api.post(`/orders/orders/${id}/reject`, { LyDo: reason })
+        return response.data
+    },
+
+    // Delete order (Manager only)
+    deleteOrder: async (id) => {
+        const response = await api.delete(`/orders/orders/${id}`)
+        return response.data
+    },
+
+    // Get order statistics
+    getOrderStatistics: async () => {
+        const response = await api.get('/orders/orders/statistics')
         return response.data
     },
 }
@@ -272,32 +342,95 @@ export const orderService = {
 // =============================================
 
 export const reportService = {
+    // Inventory report
     getInventoryReport: async (params) => {
         const response = await api.get('/reports/inventory', { params })
         return response.data
     },
 
-    getSalesReport: async (params) => {
-        const response = await api.get('/reports/sales', { params })
+    // Warehouse movements (xuất nhập tồn)
+    getWarehouseMovements: async (params) => {
+        const response = await api.get('/reports/warehouse-movements', { params })
         return response.data
     },
 
-    getBatchHistory: async (params) => {
-        const response = await api.get('/reports/batch-history', { params })
-        return response.data
-    },
-
+    // Expiry report
     getExpiryReport: async (params) => {
         const response = await api.get('/reports/expiry', { params })
         return response.data
     },
 
-    exportReport: async (type, params, format = 'pdf') => {
-        const response = await api.get(`/reports/${type}/export`, {
-            params: { ...params, format },
-            responseType: 'blob',
-        })
+    // Sales report
+    getSalesReport: async (params) => {
+        const response = await api.get('/reports/sales', { params })
         return response.data
+    },
+
+    // Batch history
+    getBatchHistory: async (params) => {
+        const response = await api.get('/reports/batch-history', { params })
+        return response.data
+    },
+
+    // Dashboard statistics
+    getDashboardStatistics: async () => {
+        const response = await api.get('/reports/dashboard')
+        return response.data
+    },
+
+    // Returns report
+    getReturnsReport: async (params) => {
+        const response = await api.get('/reports/returns', { params })
+        return response.data
+    },
+
+    // Warehouse activities
+    getWarehouseActivities: async (params) => {
+        const response = await api.get('/reports/warehouse-activities', { params })
+        return response.data
+    },
+
+    // Supplier orders report
+    getSupplierOrdersReport: async (params) => {
+        const response = await api.get('/reports/supplier-orders', { params })
+        return response.data
+    },
+
+    // Top products
+    getTopProducts: async (params) => {
+        const response = await api.get('/reports/top-products', { params })
+        return response.data
+    },
+
+    // Stock forecast
+    getStockForecast: async (params) => {
+        const response = await api.get('/reports/stock-forecast', { params })
+        return response.data
+    },
+
+    // Export reports
+    exportInventoryReport: async (params) => {
+        const response = await api.get('/reports/export/inventory', {
+            params,
+            responseType: 'blob'
+        })
+        return response
+    },
+
+    exportSalesReport: async (params) => {
+        const response = await api.get('/reports/export/sales', {
+            params,
+            responseType: 'blob'
+        })
+        return response
+    },
+
+    exportExpiryReport: async (params) => {
+        const response = await api.get('/reports/export/expiry', {
+            params,
+            responseType: 'blob'
+        })
+        return response
     },
 }
 

@@ -34,6 +34,13 @@ class RoleNV(Enum):
     QUAN_LY = "Quản lý"
 
 
+class TrangThaiDonHang(Enum):
+    """Trạng thái đơn hàng"""
+    CHO_DUYET = "Chờ duyệt"
+    DA_DUYET = "Đã duyệt"
+    TU_CHOI = "Từ chối"
+
+
 # =============================================
 # NHÂN VIÊN
 # =============================================
@@ -78,10 +85,10 @@ class NhanVienKho(db.Model):
     Role = db.Column(db.Enum(RoleNV, values_callable=lambda x: [e.value for e in x]), default=RoleNV.NHAN_VIEN)
     MatKhau = db.Column(db.String(255))  # Added for authentication
     
-    # Relationships
+    # Relationships - FIX: Specify foreign_keys explicitly
     bao_caos = db.relationship("BaoCao", back_populates="nhan_vien")
     xu_ly_tra_hangs = db.relationship("XuLyTraHang", back_populates="nhan_vien")
-    dat_hangs = db.relationship("DatHang", back_populates="nhan_vien")
+    dat_hangs = db.relationship("DatHang", foreign_keys="DatHang.MaNV", back_populates="nhan_vien")
     tra_hangs = db.relationship("TraHang", back_populates="nhan_vien")
     
     def to_dict(self):
@@ -454,12 +461,46 @@ class XuLyTraHang(db.Model):
 class DatHang(db.Model):
     __tablename__ = "DatHang"
     
+    # Primary keys từ init.sql
     TenNCC = db.Column(db.String(100), db.ForeignKey("NhaCungCap.Ten"), primary_key=True)
     MaNV = db.Column(db.String(20), db.ForeignKey("NhanVienKho.MaNV"), primary_key=True)
     
-    # Relationships
+    # Các cột bổ sung từ migration_DatHang.sql
+    MaDonHang = db.Column(db.String(20), unique=True)
+    NgayDat = db.Column(db.DateTime, default=datetime.utcnow)
+    MucDich = db.Column(db.String(200))
+    TrangThai = db.Column(db.Enum(TrangThaiDonHang, values_callable=lambda x: [e.value for e in x]), default=TrangThaiDonHang.CHO_DUYET)
+    MaNVDuyet = db.Column(db.String(20), db.ForeignKey("NhanVienKho.MaNV"))
+    NgayDuyet = db.Column(db.DateTime)
+    LyDoTuChoi = db.Column(db.Text)
+    ChiTietDonHang = db.Column(db.Text)  # JSON string (vì MySQL 5.7 không support JSON type tốt với SQLAlchemy)
+    
+    # Relationships - FIX: Specify foreign_keys explicitly for both relationships
     nha_cung_cap = db.relationship("NhaCungCap", back_populates="dat_hangs")
-    nhan_vien = db.relationship("NhanVienKho", back_populates="dat_hangs")
+    nhan_vien = db.relationship(
+        "NhanVienKho", 
+        foreign_keys=[MaNV], 
+        back_populates="dat_hangs"
+    )
+    nhan_vien_duyet = db.relationship(
+        "NhanVienKho", 
+        foreign_keys=[MaNVDuyet]
+    )
+    
+    def to_dict(self):
+        import json
+        return {
+            "TenNCC": self.TenNCC,
+            "MaNV": self.MaNV,
+            "MaDonHang": self.MaDonHang,
+            "NgayDat": self.NgayDat.isoformat() if self.NgayDat else None,
+            "MucDich": self.MucDich,
+            "TrangThai": self.TrangThai.value if self.TrangThai else None,
+            "MaNVDuyet": self.MaNVDuyet,
+            "NgayDuyet": self.NgayDuyet.isoformat() if self.NgayDuyet else None,
+            "LyDoTuChoi": self.LyDoTuChoi,
+            "ChiTietDonHang": json.loads(self.ChiTietDonHang) if self.ChiTietDonHang else [],
+        }
 
 
 class LoThuocNCC(db.Model):

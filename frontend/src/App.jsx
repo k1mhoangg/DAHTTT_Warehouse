@@ -17,6 +17,7 @@ import ProductForm from './pages/products/ProductForm'
 // UC02: Orders
 import OrderList from './pages/orders/OrderList'
 import OrderForm from './pages/orders/OrderForm'
+import SupplierOrders from './pages/orders/SupplierOrders'
 
 // UC03-UC05: Warehouse Operations
 import WarehouseImport from './pages/warehouse/WarehouseImport'
@@ -107,7 +108,7 @@ function App() {
                         path="/orders"
                         element={
                             <ProtectedRoute allowedRoles={['Quản lý', 'Nhân viên']}>
-                                <OrderList />
+                                <SupplierOrders />
                             </ProtectedRoute>
                         }
                     />
