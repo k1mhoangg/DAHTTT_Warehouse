@@ -223,9 +223,24 @@ export const warehouseService = {
         return response.data
     },
 
-    // UC07: Adjustment
+    // UC07: Adjustment - Enhanced
+    getAdjustableInventories: async () => {
+        const response = await api.get('/warehouse_inventory/adjustment')
+        return response.data
+    },
+
+    previewAdjustment: async (data) => {
+        const response = await api.post('/warehouse_inventory/adjustment/preview', data)
+        return response.data
+    },
+
     adjustInventory: async (data) => {
-        const response = await api.post('/warehouse/adjustment', data)
+        const response = await api.post('/warehouse_inventory/adjustment', data)
+        return response.data
+    },
+
+    getAdjustmentHistory: async () => {
+        const response = await api.get('/warehouse_inventory/adjustment/history')
         return response.data
     },
 
