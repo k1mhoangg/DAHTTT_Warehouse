@@ -1,9 +1,10 @@
-from flask import Flask
+from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from app.config import config
+import traceback
 
 db = SQLAlchemy()
 migrate = Migrate()
@@ -44,5 +45,19 @@ def create_app(config_name="default"):
     # Register error handlers
     from app.utils.error_handlers import register_error_handlers
     register_error_handlers(app)
+    
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        """Global exception handler"""
+        # Log the error
+        app.logger.error(f"Unhandled exception: {str(e)}")
+        app.logger.error(traceback.format_exc())
+        
+        # Return JSON response
+        return jsonify({
+            'success': False,
+            'message': f"Internal server error: {str(e)}",
+            'error': str(e)
+        }), 500
     
     return app
