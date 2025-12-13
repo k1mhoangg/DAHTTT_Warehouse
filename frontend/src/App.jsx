@@ -169,7 +169,7 @@ function App() {
                     <Route
                         path="/reports"
                         element={
-                            <ProtectedRoute allowedRoles={['Quản lý']}>
+                            <ProtectedRoute allowedRoles={['Quản lý', 'ThuNgan']}>
                                 <Reports />
                             </ProtectedRoute>
                         }

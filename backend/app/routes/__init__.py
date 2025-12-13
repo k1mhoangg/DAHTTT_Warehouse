@@ -6,17 +6,16 @@ from app.routes.warehouse import warehouse_bp
 from app.routes.warehouse_inventory import warehouse_inventory_bp
 from app.routes.orders import orders_bp
 from app.routes.reports import reports_bp
+from app.routes.sales import sales_bp
 
 # Import các routes khác khi đã tạo
 # from app.routes.orders import order_bp
 # from app.routes.reports import report_bp
-# from app.routes.sales import sales_bp
 # from app.routes.suppliers import supplier_bp
 
 # Temporary placeholder blueprints
 from flask import Blueprint
 
-sales_bp = Blueprint('sales', __name__)
 supplier_bp = Blueprint('suppliers', __name__)
 
 __all__ = [
