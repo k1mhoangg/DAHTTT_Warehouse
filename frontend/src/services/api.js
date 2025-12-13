@@ -244,9 +244,29 @@ export const warehouseService = {
         return response.data
     },
 
-    // UC09: Discard
+    // UC09: Discard - Enhanced
+    getErrorWarehouseInventory: async () => {
+        const response = await api.get('/warehouse_inventory/discard/error-warehouse-inventory')
+        return response.data
+    },
+
+    validateDiscard: async (data) => {
+        const response = await api.post('/warehouse_inventory/discard/validate', data)
+        return response.data
+    },
+
     discardGoods: async (data) => {
-        const response = await api.post('/warehouse/discard', data)
+        const response = await api.post('/warehouse_inventory/discard', data)
+        return response.data
+    },
+
+    getDiscardHistory: async () => {
+        const response = await api.get('/warehouse_inventory/discard/history')
+        return response.data
+    },
+
+    getDiscardDetail: async (id) => {
+        const response = await api.get(`/warehouse_inventory/discard/${id}`)
         return response.data
     },
 }
