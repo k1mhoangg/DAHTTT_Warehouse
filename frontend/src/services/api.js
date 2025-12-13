@@ -439,14 +439,45 @@ export const reportService = {
 // =============================================
 
 export const salesService = {
-    // UC11: Create sale
-    createSale: async (data) => {
-        const response = await api.post('/sales', data)
+    // Search products for sale (UC11)
+    searchProducts: async (params) => {
+        const response = await api.get('/sales/products/search', { params })
         return response.data
     },
 
-    getInvoice: async (id) => {
-        const response = await api.get(`/sales/invoices/${id}`)
+    // Get product batches with FEFO (UC11)
+    getProductBatches: async (maSP) => {
+        const response = await api.get(`/sales/products/${maSP}/batches`)
+        return response.data
+    },
+
+    // Scan barcode (UC11)
+    scanBarcode: async (barcode) => {
+        const response = await api.post('/sales/scan-barcode', { barcode })
+        return response.data
+    },
+
+    // Create invoice (UC11)
+    createInvoice: async (data) => {
+        const response = await api.post('/sales/invoices', data)
+        return response.data
+    },
+
+    // Get invoices list (UC11)
+    getInvoices: async (params) => {
+        const response = await api.get('/sales/invoices', { params })
+        return response.data
+    },
+
+    // Get invoice detail (UC11)
+    getInvoice: async (maHD) => {
+        const response = await api.get(`/sales/invoices/${maHD}`)
+        return response.data
+    },
+
+    // Get daily statistics (UC11)
+    getDailyStats: async (params) => {
+        const response = await api.get('/sales/stats/daily', { params })
         return response.data
     },
 
