@@ -30,7 +30,7 @@ def create_app(config_name="default"):
         warehouse_bp,
         warehouse_inventory_bp,  # Add this
         orders_bp,
-        report_bp,
+        reports_bp,
         sales_bp,
         supplier_bp,
     )
@@ -40,7 +40,7 @@ def create_app(config_name="default"):
     app.register_blueprint(warehouse_bp, url_prefix="/api/warehouse")
     app.register_blueprint(warehouse_inventory_bp, url_prefix="/api/warehouse_inventory")  # Add this line
     app.register_blueprint(orders_bp, url_prefix="/api/orders")
-    app.register_blueprint(report_bp, url_prefix="/api/reports")
+    app.register_blueprint(reports_bp, url_prefix="/api/reports")
     app.register_blueprint(sales_bp, url_prefix="/api/sales")
     app.register_blueprint(supplier_bp, url_prefix="/api/suppliers")
     

@@ -342,32 +342,95 @@ export const orderService = {
 // =============================================
 
 export const reportService = {
+    // Inventory report
     getInventoryReport: async (params) => {
         const response = await api.get('/reports/inventory', { params })
         return response.data
     },
 
-    getSalesReport: async (params) => {
-        const response = await api.get('/reports/sales', { params })
+    // Warehouse movements (xuất nhập tồn)
+    getWarehouseMovements: async (params) => {
+        const response = await api.get('/reports/warehouse-movements', { params })
         return response.data
     },
 
-    getBatchHistory: async (params) => {
-        const response = await api.get('/reports/batch-history', { params })
-        return response.data
-    },
-
+    // Expiry report
     getExpiryReport: async (params) => {
         const response = await api.get('/reports/expiry', { params })
         return response.data
     },
 
-    exportReport: async (type, params, format = 'pdf') => {
-        const response = await api.get(`/reports/${type}/export`, {
-            params: { ...params, format },
-            responseType: 'blob',
-        })
+    // Sales report
+    getSalesReport: async (params) => {
+        const response = await api.get('/reports/sales', { params })
         return response.data
+    },
+
+    // Batch history
+    getBatchHistory: async (params) => {
+        const response = await api.get('/reports/batch-history', { params })
+        return response.data
+    },
+
+    // Dashboard statistics
+    getDashboardStatistics: async () => {
+        const response = await api.get('/reports/dashboard')
+        return response.data
+    },
+
+    // Returns report
+    getReturnsReport: async (params) => {
+        const response = await api.get('/reports/returns', { params })
+        return response.data
+    },
+
+    // Warehouse activities
+    getWarehouseActivities: async (params) => {
+        const response = await api.get('/reports/warehouse-activities', { params })
+        return response.data
+    },
+
+    // Supplier orders report
+    getSupplierOrdersReport: async (params) => {
+        const response = await api.get('/reports/supplier-orders', { params })
+        return response.data
+    },
+
+    // Top products
+    getTopProducts: async (params) => {
+        const response = await api.get('/reports/top-products', { params })
+        return response.data
+    },
+
+    // Stock forecast
+    getStockForecast: async (params) => {
+        const response = await api.get('/reports/stock-forecast', { params })
+        return response.data
+    },
+
+    // Export reports
+    exportInventoryReport: async (params) => {
+        const response = await api.get('/reports/export/inventory', {
+            params,
+            responseType: 'blob'
+        })
+        return response
+    },
+
+    exportSalesReport: async (params) => {
+        const response = await api.get('/reports/export/sales', {
+            params,
+            responseType: 'blob'
+        })
+        return response
+    },
+
+    exportExpiryReport: async (params) => {
+        const response = await api.get('/reports/export/expiry', {
+            params,
+            responseType: 'blob'
+        })
+        return response
     },
 }
 
