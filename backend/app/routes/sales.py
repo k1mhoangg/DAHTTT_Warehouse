@@ -4,12 +4,13 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from app.models import (
     HoaDon, HoaDonSP, SanPham, LoSP, KhoHang, 
-    PhieuXuatKho, ThuNgan
+    PhieuXuatKho, PhieuNhapKho, ThuNgan, NhanVienKho,
+    YeuCauTraHang, XuLyTraHang
 )
 from app import db
 from app.utils.helpers import success_response, error_response, paginate, generate_id
 from sqlalchemy import and_, or_, func
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 sales_bp = Blueprint('sales', __name__)
 
@@ -537,3 +538,456 @@ def get_daily_stats():
         
     except Exception as e:
         return error_response(f"Lỗi lấy thống kê: {str(e)}", 500)
+
+
+# =============================================
+# UC10: TRẢ HÀNG (RETURNS)
+# =============================================
+
+@sales_bp.route('/returns/search-invoice', methods=['GET'])
+@jwt_required()
+def search_invoice_for_return():
+    """
+    Search invoice for return
+    
+    Query params:
+        - ma_hd: Mã hóa đơn
+    """
+    ma_hd = request.args.get('ma_hd')
+    
+    if not ma_hd:
+        return error_response("Mã hóa đơn là bắt buộc", 400)
+    
+    try:
+        invoice = HoaDon.query.get(ma_hd)
+        if not invoice:
+            return error_response("Không tìm thấy hóa đơn", 404)
+        
+        # Get invoice details
+        invoice_data = invoice.to_dict()
+        
+        # Get items with product details
+        items = []
+        for hd_sp in invoice.hoa_don_sps:
+            product = hd_sp.san_pham
+            
+            # Find the export slip to get batch info
+            export_slip = PhieuXuatKho.query.filter_by(MaThamChieu=ma_hd).first()
+            batch_info = None
+            
+            if export_slip:
+                # Try to find batch info
+                batches = LoSP.query.filter_by(
+                    MaSP=hd_sp.MaSP,
+                    MaPhieuXK=export_slip.MaPhieu
+                ).all()
+                
+                if batches:
+                    batch_info = {
+                        'MaLo': batches[0].MaLo,
+                        'HSD': batches[0].HSD.isoformat() if batches[0].HSD else None,
+                        'NSX': batches[0].NSX.isoformat() if batches[0].NSX else None
+                    }
+            
+            items.append({
+                'MaSP': hd_sp.MaSP,
+                'TenSP': product.TenSP,
+                'DVT': product.DVT,
+                'SoLuong': hd_sp.SoLuong,
+                'DonGia': float(product.GiaBan),
+                'ThanhTien': float(product.GiaBan * hd_sp.SoLuong),
+                'batch_info': batch_info
+            })
+        
+        invoice_data['items'] = items
+        invoice_data['TongTien'] = sum(item['ThanhTien'] for item in items)
+        
+        # Add cashier info
+        if invoice.thu_ngan:
+            invoice_data['ThuNgan'] = {
+                'MaNV': invoice.thu_ngan.MaNV,
+                'Ten': invoice.thu_ngan.Ten
+            }
+        
+        # Check if already returned
+        if invoice.MaYCTraHang:
+            yeu_cau = YeuCauTraHang.query.get(invoice.MaYCTraHang)
+            if yeu_cau:
+                invoice_data['da_tra_hang'] = True
+                invoice_data['yeu_cau_tra_hang'] = yeu_cau.to_dict()
+        else:
+            invoice_data['da_tra_hang'] = False
+        
+        # Calculate days since purchase
+        days_since_purchase = (datetime.now() - invoice.NgayTao).days
+        invoice_data['days_since_purchase'] = days_since_purchase
+        
+        return success_response(invoice_data)
+        
+    except Exception as e:
+        return error_response(f"Lỗi tìm kiếm hóa đơn: {str(e)}", 500)
+
+
+@sales_bp.route('/returns', methods=['POST'])
+@jwt_required()
+def create_return():
+    """
+    Create return request and import slip
+    
+    UC10: Trả hàng
+    Luồng:
+    1. Khách hàng yêu cầu trả hàng, cung cấp hóa đơn
+    2. Thu ngân tìm hóa đơn gốc
+    3. Kiểm tra điều kiện trả hàng
+    4. Chọn kho nhập (Thường/Lỗi)
+    5. Hệ thống tính tiền cần trả
+    6. Thu ngân hoàn tiền cho khách
+    7. Nhân viên chuyển hàng đến kho tương ứng và cập nhật
+    
+    Request body:
+        {
+            "ma_hd": "string",
+            "ly_do": "string",
+            "items": [
+                {
+                    "MaSP": "string",
+                    "MaLo": "string",
+                    "SoLuong": int
+                }
+            ],
+            "kho_nhap": "Kho thường" | "Kho lỗi",
+            "return_policy_days": int (default: 7)
+        }
+    """
+    data = request.get_json()
+    ma_hd = data.get('ma_hd')
+    ly_do = data.get('ly_do', '')
+    items = data.get('items', [])
+    kho_nhap_type = data.get('kho_nhap', 'Kho thường')
+    return_policy_days = data.get('return_policy_days', 7)
+    
+    if not ma_hd or not items:
+        return error_response("Mã hóa đơn và danh sách sản phẩm là bắt buộc", 400)
+    
+    try:
+        # Get current user
+        user_id = get_jwt_identity()
+        claims = get_jwt()
+        user_type = claims.get('type')
+        
+        # Both ThuNgan and NhanVienKho can process returns
+        if user_type == 'ThuNgan':
+            user = ThuNgan.query.get(user_id)
+        elif user_type == 'NhanVienKho':
+            user = NhanVienKho.query.get(user_id)
+        else:
+            return error_response("Không có quyền xử lý trả hàng", 403)
+        
+        if not user:
+            return error_response("Không tìm thấy thông tin người dùng", 404)
+        
+        # Find invoice
+        invoice = HoaDon.query.get(ma_hd)
+        if not invoice:
+            return error_response("Không tìm thấy hóa đơn", 404)
+        
+        # Check if already returned
+        if invoice.MaYCTraHang:
+            return error_response("Hóa đơn này đã được trả hàng", 400)
+        
+        # Check return policy (within X days)
+        days_since_purchase = (datetime.now() - invoice.NgayTao).days
+        if days_since_purchase > return_policy_days:
+            return error_response(
+                f"Hóa đơn đã quá hạn trả hàng ({return_policy_days} ngày)",
+                400
+            )
+        
+        # Get warehouse
+        kho = KhoHang.query.filter_by(Loai=kho_nhap_type).first()
+        if not kho:
+            return error_response(f"Không tìm thấy {kho_nhap_type}", 404)
+        
+        # Validate items
+        validated_items = []
+        total_refund = 0
+        
+        for item in items:
+            ma_sp = item.get('MaSP')
+            ma_lo = item.get('MaLo')
+            so_luong = item.get('SoLuong', 0)
+            
+            if not ma_sp or so_luong <= 0:
+                return error_response(f"Thông tin sản phẩm {ma_sp} không hợp lệ", 400)
+            
+            # Check if item is in invoice
+            hd_sp = HoaDonSP.query.filter_by(MaHD=ma_hd, MaSP=ma_sp).first()
+            if not hd_sp:
+                return error_response(f"Sản phẩm {ma_sp} không có trong hóa đơn", 400)
+            
+            if so_luong > hd_sp.SoLuong:
+                return error_response(
+                    f"Số lượng trả ({so_luong}) vượt quá số lượng mua ({hd_sp.SoLuong})",
+                    400
+                )
+            
+            # Get product and batch
+            product = SanPham.query.get(ma_sp)
+            if not product:
+                return error_response(f"Không tìm thấy sản phẩm {ma_sp}", 404)
+            
+            # Find or verify batch
+            if ma_lo:
+                batch = LoSP.query.filter_by(MaSP=ma_sp, MaLo=ma_lo).first()
+                if not batch:
+                    return error_response(f"Không tìm thấy lô {ma_lo}", 404)
+            else:
+                # Try to find batch from export slip
+                export_slip = PhieuXuatKho.query.filter_by(MaThamChieu=ma_hd).first()
+                if export_slip:
+                    batch = LoSP.query.filter_by(
+                        MaSP=ma_sp,
+                        MaPhieuXK=export_slip.MaPhieu
+                    ).first()
+                    if not batch:
+                        return error_response(
+                            f"Không tìm thấy lô hàng cho sản phẩm {ma_sp}",
+                            404
+                        )
+                else:
+                    return error_response("Không tìm thấy phiếu xuất kho tương ứng", 404)
+            
+            validated_items.append({
+                'product': product,
+                'batch': batch,
+                'so_luong': so_luong,
+                'gia_ban': product.GiaBan,
+                'thanh_tien': product.GiaBan * so_luong
+            })
+            
+            total_refund += product.GiaBan * so_luong
+        
+        # Generate return request ID
+        ma_yc = generate_id('YC', 6)
+        while YeuCauTraHang.query.get(ma_yc):
+            ma_yc = generate_id('YC', 6)
+        
+        # Create return request
+        yeu_cau = YeuCauTraHang(
+            MaYC=ma_yc,
+            NgayTao=datetime.now(),
+            LyDo=ly_do
+        )
+        db.session.add(yeu_cau)
+        
+        # Update invoice with return request
+        invoice.MaYCTraHang = ma_yc
+        
+        # Create import slip (Phiếu Nhập Kho - mục đích: Khách trả hàng)
+        ma_phieu_nk = generate_id('PNK', 6)
+        while PhieuNhapKho.query.get(ma_phieu_nk):
+            ma_phieu_nk = generate_id('PNK', 6)
+        
+        import_slip = PhieuNhapKho(
+            MaPhieu=ma_phieu_nk,
+            NgayTao=datetime.now(),
+            MucDich='Khách trả hàng',
+            MaThamChieu=ma_hd
+        )
+        db.session.add(import_slip)
+        
+        # Update batch stock
+        # Note: In this database design, each batch (MaSP, MaLo) can only exist in ONE warehouse
+        # So we update the warehouse location and increase stock
+        for item in validated_items:
+            batch = item['batch']
+            
+            # Simply update the batch:
+            # - Increase stock by returned quantity
+            # - Update warehouse to target warehouse
+            # - Update import slip reference
+            batch.SLTon += item['so_luong']
+            batch.MaKho = kho.MaKho  # Move batch to target warehouse
+            batch.MaPhieuNK = ma_phieu_nk
+        
+        # Create XuLyTraHang record if user is NhanVienKho
+        if user_type == 'NhanVienKho':
+            xu_ly = XuLyTraHang(
+                MaNV=user_id,
+                MaYCTra=ma_yc
+            )
+            db.session.add(xu_ly)
+        
+        db.session.commit()
+        
+        # Prepare response
+        return_data = {
+            'MaYC': ma_yc,
+            'MaHD': ma_hd,
+            'MaPhieuNK': ma_phieu_nk,
+            'NgayTao': yeu_cau.NgayTao.isoformat(),
+            'LyDo': ly_do,
+            'KhoNhap': kho_nhap_type,
+            'items': [{
+                'MaSP': item['product'].MaSP,
+                'TenSP': item['product'].TenSP,
+                'MaLo': item['batch'].MaLo,
+                'SoLuong': item['so_luong'],
+                'DonGia': float(item['gia_ban']),
+                'ThanhTien': float(item['thanh_tien'])
+            } for item in validated_items],
+            'TongTienHoanTra': float(total_refund),
+            'NguoiXuLy': user.Ten
+        }
+        
+        return success_response(
+            return_data,
+            message="Tạo yêu cầu trả hàng thành công",
+            status=201
+        )
+        
+    except Exception as e:
+        db.session.rollback()
+        return error_response(f"Lỗi tạo yêu cầu trả hàng: {str(e)}", 500)
+
+
+@sales_bp.route('/returns', methods=['GET'])
+@jwt_required()
+def get_returns():
+    """
+    Get list of return requests
+    
+    Query params:
+        - page: Page number (default: 1)
+        - per_page: Items per page (default: 20)
+        - from_date: Filter from date (YYYY-MM-DD)
+        - to_date: Filter to date (YYYY-MM-DD)
+    """
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    from_date = request.args.get('from_date')
+    to_date = request.args.get('to_date')
+    
+    try:
+        query = YeuCauTraHang.query
+        
+        # Apply filters
+        if from_date:
+            query = query.filter(YeuCauTraHang.NgayTao >= datetime.strptime(from_date, '%Y-%m-%d'))
+        
+        if to_date:
+            end_date = datetime.strptime(to_date, '%Y-%m-%d')
+            end_date = end_date.replace(hour=23, minute=59, second=59)
+            query = query.filter(YeuCauTraHang.NgayTao <= end_date)
+        
+        query = query.order_by(YeuCauTraHang.NgayTao.desc())
+        
+        # Paginate
+        result = paginate(query, page=page, per_page=per_page)
+        
+        # Add additional info for each return
+        for return_dict in result['items']:
+            yeu_cau = YeuCauTraHang.query.get(return_dict['MaYC'])
+            if yeu_cau:
+                # Find related invoice
+                invoice = HoaDon.query.filter_by(MaYCTraHang=yeu_cau.MaYC).first()
+                if invoice:
+                    return_dict['MaHD'] = invoice.MaHD
+                    
+                    # Calculate total refund
+                    total = 0
+                    items = []
+                    for hd_sp in invoice.hoa_don_sps:
+                        product = hd_sp.san_pham
+                        item_total = product.GiaBan * hd_sp.SoLuong
+                        items.append({
+                            'MaSP': hd_sp.MaSP,
+                            'TenSP': product.TenSP,
+                            'SoLuong': hd_sp.SoLuong,
+                            'DonGia': float(product.GiaBan),
+                            'ThanhTien': float(item_total)
+                        })
+                        total += item_total
+                    
+                    return_dict['items'] = items
+                    return_dict['TongTienHoanTra'] = float(total)
+                    
+                    # Add cashier info
+                    if invoice.thu_ngan:
+                        return_dict['ThuNgan'] = invoice.thu_ngan.Ten
+                
+                # Find related import slip
+                import_slip = PhieuNhapKho.query.filter_by(
+                    MaThamChieu=invoice.MaHD if invoice else None
+                ).first()
+                if import_slip:
+                    return_dict['MaPhieuNK'] = import_slip.MaPhieu
+        
+        return success_response(result)
+        
+    except Exception as e:
+        return error_response(f"Lỗi lấy danh sách trả hàng: {str(e)}", 500)
+
+
+@sales_bp.route('/returns/<string:ma_yc>', methods=['GET'])
+@jwt_required()
+def get_return_detail(ma_yc):
+    """Get return request detail by ID"""
+    try:
+        yeu_cau = YeuCauTraHang.query.get(ma_yc)
+        if not yeu_cau:
+            return error_response("Không tìm thấy yêu cầu trả hàng", 404)
+        
+        return_data = yeu_cau.to_dict()
+        
+        # Find related invoice
+        invoice = HoaDon.query.filter_by(MaYCTraHang=ma_yc).first()
+        if invoice:
+            return_data['MaHD'] = invoice.MaHD
+            return_data['NgayMua'] = invoice.NgayTao.isoformat()
+            
+            # Get items
+            items = []
+            total = 0
+            for hd_sp in invoice.hoa_don_sps:
+                product = hd_sp.san_pham
+                item_total = product.GiaBan * hd_sp.SoLuong
+                items.append({
+                    'MaSP': hd_sp.MaSP,
+                    'TenSP': product.TenSP,
+                    'DVT': product.DVT,
+                    'SoLuong': hd_sp.SoLuong,
+                    'DonGia': float(product.GiaBan),
+                    'ThanhTien': float(item_total)
+                })
+                total += item_total
+            
+            return_data['items'] = items
+            return_data['TongTienHoanTra'] = float(total)
+            
+            # Add cashier info
+            if invoice.thu_ngan:
+                return_data['ThuNgan'] = {
+                    'MaNV': invoice.thu_ngan.MaNV,
+                    'Ten': invoice.thu_ngan.Ten
+                }
+        
+        # Find related import slip
+        if invoice:
+            import_slip = PhieuNhapKho.query.filter_by(MaThamChieu=invoice.MaHD).first()
+            if import_slip:
+                return_data['MaPhieuNK'] = import_slip.MaPhieu
+                return_data['NgayNhapKho'] = import_slip.NgayTao.isoformat()
+        
+        # Find handler (NhanVienKho)
+        xu_ly = XuLyTraHang.query.filter_by(MaYCTra=ma_yc).first()
+        if xu_ly and xu_ly.nhan_vien:
+            return_data['NguoiXuLy'] = {
+                'MaNV': xu_ly.nhan_vien.MaNV,
+                'Ten': xu_ly.nhan_vien.Ten
+            }
+        
+        return success_response(return_data)
+        
+    except Exception as e:
+        return error_response(f"Lỗi lấy chi tiết trả hàng: {str(e)}", 500)

@@ -481,14 +481,24 @@ export const salesService = {
         return response.data
     },
 
-    // UC10: Process return
+    // UC10: Returns
+    searchInvoiceForReturn: async (params) => {
+        const response = await api.get('/sales/returns/search-invoice', { params })
+        return response.data
+    },
+
     createReturn: async (data) => {
         const response = await api.post('/sales/returns', data)
         return response.data
     },
 
-    getReturn: async (id) => {
-        const response = await api.get(`/sales/returns/${id}`)
+    getReturns: async (params) => {
+        const response = await api.get('/sales/returns', { params })
+        return response.data
+    },
+
+    getReturn: async (maYC) => {
+        const response = await api.get(`/sales/returns/${maYC}`)
         return response.data
     },
 }
