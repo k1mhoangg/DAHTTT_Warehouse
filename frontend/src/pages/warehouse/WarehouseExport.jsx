@@ -1,10 +1,15 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, TrendingDown, AlertCircle, Search, Package, Eye, Scan } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { useState, useEffect } from 'react'
+import { warehouseService, productService } from '@/services/api'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select'
 import {
     Table,
     TableBody,
@@ -12,470 +17,1060 @@ import {
     TableHead,
     TableHeader,
     TableRow,
-} from '@/components/ui/table';
+} from '@/components/ui/table'
 import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from '@/components/ui/select';
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { useToast } from '@/hooks/use-toast'
 import {
     Dialog,
     DialogContent,
     DialogDescription,
-    DialogFooter,
     DialogHeader,
     DialogTitle,
-} from '@/components/ui/dialog';
-import { useToast } from '@/components/ui/use-toast';
-import { Badge } from '@/components/ui/badge';
-import { warehouseService, productService } from '@/services/api';
+    DialogTrigger,
+} from '@/components/ui/dialog'
+import {
+    PackageOpen,
+    Plus,
+    Trash2,
+    Search,
+    Scan,
+    AlertTriangle,
+    CheckCircle,
+    XCircle,
+    FileText,
+    Calendar,
+    Package
+} from 'lucide-react'
 
+/**
+ * UC04: Xuất kho
+ * 
+ * Luồng chính:
+ * 1. Chọn chức năng "Xuất kho"
+ * 2. Chọn mục đích xuất
+ * 3. Nhập tên sản phẩm
+ * 4. Hệ thống hiển thị các lô đang tồn và gợi ý lô có HSD gần nhất (FEFO)
+ * 5. Chọn lô và quét Barcode sản phẩm
+ * 6. Duyệt phiếu để cập nhật tồn kho
+ * 
+ * Yêu cầu phi chức năng:
+ * - Phản hồi quét barcode < 1s với 96% lô SP
+ * - Thuật toán FEFO chính xác
+ */
 export default function WarehouseExport() {
-    const { toast } = useToast();
-    const queryClient = useQueryClient();
+    const { toast } = useToast()
 
-    const [showExportDialog, setShowExportDialog] = useState(false);
-    const [showDetailDialog, setShowDetailDialog] = useState(false);
-    const [selectedExport, setSelectedExport] = useState(null);
-    const [selectedWarehouse, setSelectedWarehouse] = useState('');
-    const [mucDich, setMucDich] = useState('');
-    const [maThamChieu, setMaThamChieu] = useState('');
-    const [exportItems, setExportItems] = useState([]);
-    const [fefoSuggestions, setFefoSuggestions] = useState({});
-    
-    // UC04: New states for barcode validation
-    const [previewData, setPreviewData] = useState(null);
-    const [barcodeValidation, setBarcodeValidation] = useState({});
+    // State
+    const [warehouses, setWarehouses] = useState([])
+    const [products, setProducts] = useState([])
+    const [warehouseProducts, setWarehouseProducts] = useState([]) // Sản phẩm trong kho được chọn
+    const [exports, setExports] = useState([])
+    const [loading, setLoading] = useState(false)
 
-    // Fetch warehouses
-    const { data: warehousesData } = useQuery({
-        queryKey: ['warehouses'],
-        queryFn: warehouseService.getWarehouses,
-    });
+    // Pagination state
+    const [currentPage, setCurrentPage] = useState(1)
+    const [totalPages, setTotalPages] = useState(1)
+    const [totalProducts, setTotalProducts] = useState(0)
+    const itemsPerPage = 10
 
-    // Fetch products
-    const { data: productsData } = useQuery({
-        queryKey: ['products'],
-        queryFn: () => productService.getProducts({}),
-    });
+    // Form state
+    const [formData, setFormData] = useState({
+        MaKho: '',
+        MucDich: '',
+        MaThamChieu: '',
+        items: []
+    })
 
-    // Fetch export history
-    const { data: exportsData, isLoading: exportsLoading } = useQuery({
-        queryKey: ['warehouse-exports'],
-        queryFn: warehouseService.getExports,
-    });
+    // Item addition state
+    const [currentItem, setCurrentItem] = useState({
+        MaSP: '',
+        MaLo: '',
+        MaVach: '',
+        SoLuong: 0
+    })
 
-    // Fetch inventory for selected warehouse
-    const { data: inventoryData } = useQuery({
-        queryKey: ['warehouse-inventory', selectedWarehouse],
-        queryFn: () => warehouseService.getWarehouseInventory(selectedWarehouse),
-        enabled: !!selectedWarehouse,
-    });
+    // FEFO suggestions
+    const [fefoBatches, setFefoBatches] = useState([])
+    const [selectedProduct, setSelectedProduct] = useState(null)
+    const [showFEFODialog, setShowFEFODialog] = useState(false)
 
-    const warehouses = warehousesData?.data?.warehouses || [];
-    const products = productsData?.data?.items || [];
-    const exports = exportsData?.data?.exports || [];
-    const inventory = inventoryData?.data?.inventory || [];
+    // Barcode scanner
+    const [barcodeInput, setBarcodeInput] = useState('')
+    const [scanResult, setScanResult] = useState(null)
+    const [showScanDialog, setShowScanDialog] = useState(false)
 
-    // Export mutation
-    const exportMutation = useMutation({
-        mutationFn: warehouseService.exportWarehouse,
-        onSuccess: () => {
-            queryClient.invalidateQueries(['warehouse-exports']);
-            queryClient.invalidateQueries(['warehouse-inventory']);
-            queryClient.invalidateQueries(['products']);
-            toast({
-                title: 'Thành công',
-                description: 'Đã xuất kho thành công',
-            });
-            resetForm();
-        },
-        onError: (error) => {
-            toast({
-                title: 'Lỗi',
-                description: error.response?.data?.error || 'Không thể xuất kho',
-                variant: 'destructive',
-            });
-        },
-    });
+    // View detail
+    const [viewingExport, setViewingExport] = useState(null)
+    const [showDetailDialog, setShowDetailDialog] = useState(false)
 
-    // FEFO suggestion mutation
-    const fefoMutation = useMutation({
-        mutationFn: warehouseService.suggestFEFO,
-        onSuccess: (data, variables) => {
-            const itemId = variables.itemId;
-            setFefoSuggestions((prev) => ({
-                ...prev,
-                [itemId]: data.data,
-            }));
-        },
-    });
+    // Load initial data
+    useEffect(() => {
+        loadInitialData()
+    }, [])
 
-    const resetForm = () => {
-        setShowExportDialog(false);
-        setSelectedWarehouse('');
-        setMucDich('');
-        setMaThamChieu('');
-        setExportItems([]);
-        setFefoSuggestions({});
-        // UC04: Reset barcode validation and preview
-        setBarcodeValidation({});
-        setPreviewData(null);
-    };
-
-    const addExportItem = () => {
-        setExportItems([
-            ...exportItems,
-            {
-                id: Date.now(),
-                MaSP: '',
-                SoLuong: 0,
-                MaLo: '', // Optional - auto FEFO if empty
-                MaVach: '', // UC04: Required barcode
-            },
-        ]);
-    };
-
-    const updateExportItem = (id, field, value) => {
-        setExportItems(
-            exportItems.map((item) =>
-                item.id === id ? { ...item, [field]: value } : item
-            )
-        );
-
-        // Clear validation when product or barcode changes (UC04)
-        if (field === 'MaSP' || field === 'MaVach') {
-            setBarcodeValidation(prev => {
-                const newValidation = { ...prev };
-                delete newValidation[id];
-                return newValidation;
-            });
+    // Load warehouse products when warehouse is selected
+    useEffect(() => {
+        if (formData.MaKho) {
+            loadWarehouseProducts(formData.MaKho, 1)
+        } else {
+            setWarehouseProducts([])
+            setCurrentPage(1)
+            setTotalPages(1)
         }
+    }, [formData.MaKho])
 
-        // Auto-fetch FEFO suggestion when product or quantity changes
-        if (field === 'MaSP' || field === 'SoLuong') {
-            const item = exportItems.find((i) => i.id === id);
-            const updatedItem = { ...item, [field]: value };
-
-            if (updatedItem.MaSP && updatedItem.SoLuong > 0 && selectedWarehouse) {
-                fefoMutation.mutate({
-                    itemId: id,
-                    MaSP: updatedItem.MaSP,
-                    MaKho: selectedWarehouse,
-                    SoLuong: parseInt(updatedItem.SoLuong),
-                });
-            }
-        }
-    };
-
-    const removeExportItem = (id) => {
-        setExportItems(exportItems.filter((item) => item.id !== id));
-        setFefoSuggestions((prev) => {
-            const newSuggestions = { ...prev };
-            delete newSuggestions[id];
-            return newSuggestions;
-        });
-        // Also clear barcode validation (UC04)
-        setBarcodeValidation(prev => {
-            const newValidation = { ...prev };
-            delete newValidation[id];
-            return newValidation;
-        });
-    };
-
-    // UC04: Preview export before submitting
-    const previewExport = async () => {
-        if (!selectedWarehouse || exportItems.length === 0) {
-            toast({
-                title: 'Lỗi',
-                description: 'Vui lòng chọn kho và thêm sản phẩm',
-                variant: 'destructive'
-            });
-            return;
-        }
-
+    const loadInitialData = async () => {
         try {
-            const validItems = exportItems.filter(item => item.MaSP && item.SoLuong > 0);
-            
-            const result = await warehouseService.previewExport({
-                MaKho: selectedWarehouse,
-                items: validItems.map(item => ({
-                    MaSP: item.MaSP,
-                    SoLuong: item.SoLuong
-                }))
-            });
+            setLoading(true)
+            const [warehousesRes, productsRes, exportsRes] = await Promise.all([
+                warehouseService.getWarehouses(),
+                productService.getProducts(),
+                warehouseService.getExports()
+            ])
 
-            setPreviewData(result.data);
-            
-            if (!result.data.can_fulfill_all) {
+            console.log('Raw API responses:', {
+                warehousesRes,
+                productsRes,
+                exportsRes
+            })
+
+            const warehousesData = warehousesRes?.data?.warehouses
+                || warehousesRes?.warehouses
+                || warehousesRes?.data?.items
+                || warehousesRes?.data
+                || warehousesRes
+                || []
+
+            const productsData = productsRes?.data?.items
+                || productsRes?.data?.products
+                || productsRes?.products
+                || productsRes?.data
+                || productsRes
+                || []
+
+            const exportsData = exportsRes?.data?.exports
+                || exportsRes?.exports
+                || exportsRes?.data?.items
+                || exportsRes?.data
+                || exportsRes
+                || []
+
+            const validWarehouses = Array.isArray(warehousesData)
+                ? warehousesData.filter(w => w && w.MaKho)
+                : []
+
+            const validProducts = Array.isArray(productsData)
+                ? productsData.filter(p => p && p.MaSP && p.TenSP)
+                : []
+
+            const validExports = Array.isArray(exportsData)
+                ? exportsData.filter(e => e && e.MaPhieu)
+                : []
+
+            setWarehouses(validWarehouses)
+            setProducts(validProducts)
+            setExports(validExports)
+
+            // Toast thông báo
+            if (validWarehouses.length === 0) {
                 toast({
                     title: 'Cảnh báo',
-                    description: 'Một số sản phẩm không đủ tồn kho',
-                    variant: 'destructive'
-                });
+                    description: 'Không có kho nào trong hệ thống',
+                    variant: 'default',
+                })
             }
+
+            console.log(`✓ Loaded ${validProducts.length} products successfully`)
         } catch (error) {
+            console.error('Load initial data error:', error)
             toast({
                 title: 'Lỗi',
-                description: error.response?.data?.message || 'Không thể xem trước xuất kho',
-                variant: 'destructive'
-            });
+                description: error.response?.data?.message || error.message || 'Không thể tải dữ liệu',
+                variant: 'destructive',
+            })
+            setWarehouses([])
+            setProducts([])
+            setExports([])
+        } finally {
+            setLoading(false)
         }
-    };
+    }
 
-    // UC04: Validate barcode when scanned
-    const validateBarcode = async (itemId, barcode) => {
-        const item = exportItems.find(i => i.id === itemId);
-        if (!item.MaSP || !selectedWarehouse) return;
+    // Load products in selected warehouse with pagination
+    const loadWarehouseProducts = async (maKho, page = 1) => {
+        try {
+            setLoading(true)
+            const response = await warehouseService.getWarehouseInventory(maKho)
+
+            console.log('Warehouse inventory response:', response)
+
+            const inventoryData = response?.data?.inventory
+                || response?.inventory
+                || response?.data
+                || response
+                || []
+
+            // Group by product and get unique products
+            const productMap = new Map()
+
+            inventoryData.forEach(batch => {
+                if (batch.MaSP && batch.SLTon > 0) {
+                    if (!productMap.has(batch.MaSP)) {
+                        const productInfo = batch.product || products.find(p => p.MaSP === batch.MaSP)
+                        if (productInfo) {
+                            productMap.set(batch.MaSP, {
+                                MaSP: batch.MaSP,
+                                TenSP: productInfo.TenSP,
+                                DVT: productInfo.DVT,
+                                LoaiSP: productInfo.LoaiSP,
+                                GiaBan: productInfo.GiaBan,
+                                TotalStock: batch.SLTon,
+                                Batches: 1
+                            })
+                        }
+                    } else {
+                        const existing = productMap.get(batch.MaSP)
+                        existing.TotalStock += batch.SLTon
+                        existing.Batches += 1
+                    }
+                }
+            })
+
+            const allProducts = Array.from(productMap.values())
+
+            // Pagination
+            const startIndex = (page - 1) * itemsPerPage
+            const endIndex = startIndex + itemsPerPage
+            const paginatedProducts = allProducts.slice(startIndex, endIndex)
+
+            setWarehouseProducts(paginatedProducts)
+            setTotalProducts(allProducts.length)
+            setTotalPages(Math.ceil(allProducts.length / itemsPerPage))
+            setCurrentPage(page)
+
+            console.log(`✓ Loaded ${paginatedProducts.length}/${allProducts.length} products for warehouse ${maKho}`)
+
+            if (allProducts.length === 0) {
+                toast({
+                    title: 'Thông báo',
+                    description: `Kho ${maKho} chưa có sản phẩm nào`,
+                    variant: 'default',
+                })
+            }
+        } catch (error) {
+            console.error('Load warehouse products error:', error)
+            toast({
+                title: 'Lỗi',
+                description: 'Không thể tải danh sách sản phẩm trong kho',
+                variant: 'destructive',
+            })
+            setWarehouseProducts([])
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    // Handle page change
+    const handlePageChange = (newPage) => {
+        if (newPage >= 1 && newPage <= totalPages && formData.MaKho) {
+            loadWarehouseProducts(formData.MaKho, newPage)
+        }
+    }
+
+    // Handle warehouse change
+    const handleWarehouseChange = (value) => {
+        setFormData({ ...formData, MaKho: value })
+        // Reset current item when changing warehouse
+        setCurrentItem({
+            MaSP: '',
+            MaLo: '',
+            MaVach: '',
+            SoLuong: 0
+        })
+    }
+
+    // UC04 Step 3 & 4: Nhập tên sản phẩm và hiển thị FEFO
+    const handleProductSelect = async (maSP) => {
+        if (!formData.MaKho) {
+            toast({
+                title: 'Cảnh báo',
+                description: 'Vui lòng chọn kho xuất trước',
+                variant: 'destructive',
+            })
+            return
+        }
 
         try {
-            const result = await warehouseService.validateBarcode({
-                MaVach: barcode,
-                MaKho: selectedWarehouse,
-                MaSP: item.MaSP
-            });
+            setLoading(true)
+            const product = products.find(p => p.MaSP === maSP)
+            setSelectedProduct(product)
 
-            if (result.data.valid) {
-                const batch = result.data.batch;
-                setBarcodeValidation(prev => ({
-                    ...prev,
-                    [itemId]: {
-                        valid: true,
-                        batch,
-                        message: `Batch hợp lệ: ${batch.MaLo} (Tồn kho: ${batch.SLTon})`
-                    }
-                }));
+            // Get FEFO batches
+            const response = await warehouseService.getFEFOBatches({
+                MaSP: maSP,
+                MaKho: formData.MaKho,
+                SoLuong: currentItem.SoLuong || 0
+            })
 
-                // Auto-fill MaLo
-                updateExportItem(itemId, 'MaLo', batch.MaLo);
+            const batchesData = response?.data?.batches || response?.batches || response?.data || response || []
 
+            console.log('FEFO batches:', batchesData)
+
+            setFefoBatches(Array.isArray(batchesData) ? batchesData : [])
+            setShowFEFODialog(true)
+
+            if (batchesData.length === 0) {
                 toast({
-                    title: 'Thành công',
-                    description: 'Mã vạch hợp lệ',
-                    variant: 'default'
-                });
+                    title: 'Không tìm thấy lô hàng',
+                    description: 'Không có lô hàng khả dụng cho sản phẩm này',
+                    variant: 'destructive',
+                })
             }
         } catch (error) {
-            setBarcodeValidation(prev => ({
-                ...prev,
-                [itemId]: {
-                    valid: false,
-                    message: error.response?.data?.message || 'Mã vạch không hợp lệ'
-                }
-            }));
-            
+            console.error('Get FEFO batches error:', error)
             toast({
                 title: 'Lỗi',
-                description: 'Mã vạch không hợp lệ',
-                variant: 'destructive'
-            });
-        }
-    };
-
-    const handleSubmitExport = () => {
-        if (!selectedWarehouse) {
-            toast({
-                title: 'Lỗi',
-                description: 'Vui lòng chọn kho',
+                description: error.response?.data?.message || error.message || 'Không thể tải danh sách lô hàng',
                 variant: 'destructive',
-            });
-            return;
+            })
+            setFefoBatches([])
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    // UC04 Step 5: Quét Barcode sản phẩm
+    const handleBarcodeScan = async () => {
+        if (!barcodeInput.trim()) {
+            toast({
+                title: 'Cảnh báo',
+                description: 'Vui lòng nhập mã vạch',
+                variant: 'destructive',
+            })
+            return
         }
 
-        if (exportItems.length === 0) {
+        if (!formData.MaKho) {
             toast({
-                title: 'Lỗi',
+                title: 'Cảnh báo',
+                description: 'Vui lòng chọn kho xuất trước',
+                variant: 'destructive',
+            })
+            return
+        }
+
+        try {
+            setLoading(true)
+            const startTime = performance.now()
+
+            const response = await warehouseService.scanBarcodeForExport({
+                MaVach: barcodeInput,
+                MaKho: formData.MaKho,
+                MaSP: currentItem.MaSP || undefined
+            })
+
+            const endTime = performance.now()
+            const responseTime = endTime - startTime
+
+            const resultData = response?.data || response
+
+            console.log('Barcode scan result:', resultData)
+
+            setScanResult({
+                ...resultData,
+                responseTime: responseTime
+            })
+
+            // Auto-fill current item
+            if (resultData?.batch_info) {
+                setCurrentItem({
+                    ...currentItem,
+                    MaSP: resultData.batch_info.MaSP,
+                    MaLo: resultData.batch_info.MaLo,
+                    MaVach: resultData.batch_info.MaVach,
+                    SoLuong: currentItem.SoLuong || 1
+                })
+            }
+
+            // Show warnings if any
+            if (resultData?.warnings && Array.isArray(resultData.warnings)) {
+                const warningMessages = resultData.warnings.filter(w => w)
+                if (warningMessages.length > 0) {
+                    toast({
+                        title: 'Cảnh báo',
+                        description: warningMessages.join(', '),
+                        variant: 'default',
+                    })
+                }
+            }
+
+            console.log(`Barcode scan response time: ${responseTime.toFixed(2)}ms`)
+
+        } catch (error) {
+            console.error('Barcode scan error:', error)
+            toast({
+                title: 'Lỗi quét mã vạch',
+                description: error.response?.data?.message || error.message || 'Mã vạch không hợp lệ',
+                variant: 'destructive',
+            })
+            setScanResult(null)
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    // Select batch from FEFO suggestions
+    const handleSelectBatch = (batch) => {
+        setCurrentItem({
+            ...currentItem,
+            MaSP: batch.MaSP,
+            MaLo: batch.MaLo,
+            MaVach: batch.MaVach,
+            SoLuong: batch.suggested_quantity || currentItem.SoLuong || 0
+        })
+        setShowFEFODialog(false)
+
+        toast({
+            title: 'Đã chọn lô hàng',
+            description: `Lô ${batch.MaLo} - HSD: ${batch.HSD || 'N/A'}`,
+        })
+    }
+
+    // Add item to export list
+    const handleAddItem = () => {
+        // Validation
+        if (!currentItem.MaSP || !currentItem.MaLo || !currentItem.SoLuong) {
+            toast({
+                title: 'Cảnh báo',
+                description: 'Vui lòng điền đầy đủ thông tin sản phẩm',
+                variant: 'destructive',
+            })
+            return
+        }
+
+        if (currentItem.SoLuong <= 0) {
+            toast({
+                title: 'Cảnh báo',
+                description: 'Số lượng phải lớn hơn 0',
+                variant: 'destructive',
+            })
+            return
+        }
+
+        // Check if item already exists
+        const existingIndex = formData.items.findIndex(
+            item => item.MaSP === currentItem.MaSP && item.MaLo === currentItem.MaLo
+        )
+
+        if (existingIndex >= 0) {
+            // Update existing item
+            const newItems = [...formData.items]
+            newItems[existingIndex].SoLuong += parseInt(currentItem.SoLuong)
+            setFormData({ ...formData, items: newItems })
+        } else {
+            // Add new item
+            const product = products.find(p => p.MaSP === currentItem.MaSP)
+            setFormData({
+                ...formData,
+                items: [
+                    ...formData.items,
+                    {
+                        ...currentItem,
+                        TenSP: product?.TenSP || currentItem.MaSP,
+                        DVT: product?.DVT || '',
+                        SoLuong: parseInt(currentItem.SoLuong)
+                    }
+                ]
+            })
+        }
+
+        // Reset current item
+        setCurrentItem({
+            MaSP: '',
+            MaLo: '',
+            MaVach: '',
+            SoLuong: 0
+        })
+        setBarcodeInput('')
+        setScanResult(null)
+
+        toast({
+            title: 'Thành công',
+            description: 'Đã thêm sản phẩm vào phiếu xuất',
+        })
+    }
+
+    // Remove item from list
+    const handleRemoveItem = (index) => {
+        const newItems = formData.items.filter((_, i) => i !== index)
+        setFormData({ ...formData, items: newItems })
+
+        toast({
+            title: 'Đã xóa',
+            description: 'Đã xóa sản phẩm khỏi phiếu xuất',
+        })
+    }
+
+    // UC04 Step 6: Submit export
+    const handleSubmit = async (e) => {
+        e.preventDefault()
+
+        // Validation
+        if (!formData.MaKho || !formData.MucDich) {
+            toast({
+                title: 'Cảnh báo',
+                description: 'Vui lòng điền đầy đủ thông tin bắt buộc',
+                variant: 'destructive',
+            })
+            return
+        }
+
+        if (formData.items.length === 0) {
+            toast({
+                title: 'Cảnh báo',
                 description: 'Vui lòng thêm ít nhất một sản phẩm',
                 variant: 'destructive',
-            });
-            return;
+            })
+            return
         }
 
-        // UC04: Enhanced validation including barcode
-        const invalidItems = exportItems.filter(
-            (item) => !item.MaSP || !item.SoLuong || item.SoLuong <= 0 || !item.MaVach
-        );
+        try {
+            setLoading(true)
 
-        if (invalidItems.length > 0) {
+            console.log('Submitting export data:', formData)
+
+            const response = await warehouseService.exportWarehouse(formData)
+
+            console.log('Export response:', response)
+
+            // Handle response structure
+            const responseData = response?.data || response
+            const phieuData = responseData?.phieu || responseData
+
+            toast({
+                title: 'Thành công',
+                description: `Đã tạo phiếu xuất kho ${phieuData?.MaPhieu || 'thành công'}`,
+            })
+
+            // Reset form
+            setFormData({
+                MaKho: '',
+                MucDich: '',
+                MaThamChieu: '',
+                items: []
+            })
+            setCurrentItem({
+                MaSP: '',
+                MaLo: '',
+                MaVach: '',
+                SoLuong: 0
+            })
+
+            // Reload exports
+            loadInitialData()
+        } catch (error) {
+            console.error('Export error:', error)
+            console.error('Error response:', error.response)
             toast({
                 title: 'Lỗi',
-                description: 'Vui lòng điền đầy đủ thông tin sản phẩm bao gồm mã vạch (UC04)',
+                description: error.response?.data?.message || error.message || 'Không thể tạo phiếu xuất kho',
                 variant: 'destructive',
-            });
-            return;
+            })
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    // View export detail
+    const handleViewExport = async (maPhieu) => {
+        try {
+            setLoading(true)
+            const response = await warehouseService.getExport(maPhieu)
+            const exportData = response?.data || response
+
+            console.log('Export detail:', exportData)
+
+            setViewingExport(exportData)
+            setShowDetailDialog(true)
+        } catch (error) {
+            console.error('Get export detail error:', error)
+            toast({
+                title: 'Lỗi',
+                description: error.response?.data?.message || error.message || 'Không thể tải chi tiết phiếu xuất',
+                variant: 'destructive',
+            })
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    // Delete export (Manager only)
+    const handleDeleteExport = async (maPhieu) => {
+        if (!confirm('Bạn có chắc chắn muốn xóa phiếu xuất này?')) return
+
+        try {
+            setLoading(true)
+            await warehouseService.deleteExport(maPhieu)
+
+            toast({
+                title: 'Thành công',
+                description: 'Đã xóa phiếu xuất kho',
+            })
+
+            loadInitialData()
+        } catch (error) {
+            toast({
+                title: 'Lỗi',
+                description: error.response?.data?.message || 'Không thể xóa phiếu xuất',
+                variant: 'destructive',
+            })
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    // Get status badge
+    const getStatusBadge = (status) => {
+        const variants = {
+            normal: 'default',
+            warning: 'warning',
+            critical: 'destructive'
         }
 
-        // UC04: Check if all barcodes are validated
-        for (const item of exportItems) {
-            if (!barcodeValidation[item.id]?.valid) {
-                toast({
-                    title: 'Lỗi',
-                    description: `Vui lòng xác thực mã vạch cho sản phẩm ${item.MaSP}`,
-                    variant: 'destructive'
-                });
-                return;
-            }
+        const labels = {
+            normal: 'Bình thường',
+            warning: 'Cảnh báo',
+            critical: 'Nguy hiểm'
         }
 
-        // UC04: Format according to backend API requirements
-        const payload = {
-            MaKho: selectedWarehouse,
-            MucDich: mucDich || 'Xuất bán hàng',
-            MaThamChieu: maThamChieu,
-            items: exportItems.map((item) => ({
-                MaSP: item.MaSP,
-                MaVach: item.MaVach,
-                MaLo: barcodeValidation[item.id]?.batch?.MaLo || item.MaLo,
-                SoLuong: parseInt(item.SoLuong)
-            })),
-        };
+        return (
+            <Badge variant={variants[status] || 'default'}>
+                {labels[status] || status}
+            </Badge>
+        )
+    }
 
-        exportMutation.mutate(payload);
-    };
-
-    const handleViewDetail = (exportRecord) => {
-        setSelectedExport(exportRecord);
-        setShowDetailDialog(true);
-    };
-
-    const formatDate = (dateString) => {
-        if (!dateString) return 'N/A';
-        return new Date(dateString).toLocaleDateString('vi-VN');
-    };
-
-    const formatDateTime = (dateString) => {
-        if (!dateString) return 'N/A';
-        return new Date(dateString).toLocaleString('vi-VN');
-    };
-
-    const isExpiringSoon = (hsd) => {
-        if (!hsd) return false;
-        const expiryDate = new Date(hsd);
-        const today = new Date();
-        const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
-        return daysUntilExpiry <= 30 && daysUntilExpiry >= 0;
-    };
-
-    const isExpired = (hsd) => {
-        if (!hsd) return false;
-        return new Date(hsd) < new Date();
-    };
+    // Show loading state on initial load
+    if (loading && warehouses.length === 0 && products.length === 0 && exports.length === 0) {
+        return (
+            <div className="flex items-center justify-center min-h-[400px]">
+                <div className="text-center space-y-4">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+                    <p className="text-muted-foreground">Đang tải dữ liệu...</p>
+                </div>
+            </div>
+        )
+    }
 
     return (
         <div className="space-y-6">
+            {/* Header */}
             <div className="flex justify-between items-center">
                 <div>
-                    <h1 className="text-2xl font-bold">Xuất kho (FEFO)</h1>
-                    <p className="text-gray-600">UC04: Xuất kho theo nguyên tắc First Expired, First Out</p>
+                    <h1 className="text-3xl font-bold flex items-center gap-2">
+                        <PackageOpen className="h-8 w-8" />
+                        Xuất Kho (UC04)
+                    </h1>
+                    <p className="text-muted-foreground mt-1">
+                        Ghi nhận hàng hóa xuất khỏi kho - Áp dụng FEFO (First Expired, First Out)
+                    </p>
                 </div>
-                <Button onClick={() => setShowExportDialog(true)}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Tạo phiếu xuất kho
-                </Button>
             </div>
 
-            {/* Current Inventory */}
+            {/* Export Form */}
             <Card>
                 <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                        <Package className="h-5 w-5" />
-                        Tồn kho hiện tại
-                    </CardTitle>
+                    <CardTitle>Tạo Phiếu Xuất Kho</CardTitle>
                     <CardDescription>
-                        <div className="flex items-center gap-4 mt-2">
-                            <Label>Chọn kho:</Label>
-                            <Select value={selectedWarehouse} onValueChange={setSelectedWarehouse}>
-                                <SelectTrigger className="w-[200px]">
-                                    <SelectValue placeholder="Chọn kho" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {warehouses.map((w) => (
-                                        <SelectItem key={w.MaKho} value={w.MaKho}>
-                                            {w.MaKho} - {w.Loai}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        Thêm sản phẩm cần xuất, hệ thống sẽ gợi ý lô hàng theo FEFO
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                    {selectedWarehouse ? (
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Mã SP</TableHead>
-                                    <TableHead>Tên sản phẩm</TableHead>
-                                    <TableHead>Mã lô</TableHead>
-                                    <TableHead>NSX</TableHead>
-                                    <TableHead>HSD</TableHead>
-                                    <TableHead className="text-right">Tồn kho</TableHead>
-                                    <TableHead>Trạng thái</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {inventory.length === 0 ? (
-                                    <TableRow>
-                                        <TableCell colSpan={7} className="text-center text-gray-500">
-                                            Kho trống
-                                        </TableCell>
-                                    </TableRow>
+                    <form onSubmit={handleSubmit} className="space-y-6">
+                        {/* Basic Info */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="MaKho">
+                                    Kho xuất <span className="text-red-500">*</span>
+                                </Label>
+                                <Select
+                                    value={formData.MaKho}
+                                    onValueChange={handleWarehouseChange}
+                                    disabled={loading}
+                                >
+                                    <SelectTrigger id="MaKho">
+                                        <SelectValue placeholder="Chọn kho xuất" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {warehouses.length === 0 ? (
+                                            <div className="px-2 py-4 text-sm text-muted-foreground text-center">
+                                                Không có kho nào
+                                            </div>
+                                        ) : (
+                                            warehouses.map((kho) => (
+                                                <SelectItem key={kho.MaKho} value={kho.MaKho}>
+                                                    {kho.MaKho} - {kho.Loai}
+                                                </SelectItem>
+                                            ))
+                                        )}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="MucDich">
+                                    Mục đích xuất <span className="text-red-500">*</span>
+                                </Label>
+                                <Input
+                                    id="MucDich"
+                                    placeholder="Nhập mục đích xuất (vd: Xuất bán hàng, Xuất chuyển kho...)"
+                                    value={formData.MucDich}
+                                    onChange={(e) =>
+                                        setFormData({ ...formData, MucDich: e.target.value })
+                                    }
+                                    disabled={loading}
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="MaThamChieu">Mã tham chiếu</Label>
+                                <Input
+                                    id="MaThamChieu"
+                                    placeholder="Mã hóa đơn, đơn hàng..."
+                                    value={formData.MaThamChieu}
+                                    onChange={(e) =>
+                                        setFormData({ ...formData, MaThamChieu: e.target.value })
+                                    }
+                                />
+                            </div>
+                        </div>
+
+                        {/* Warehouse Products Display */}
+                        {formData.MaKho && (
+                            <div className="border rounded-lg p-4 space-y-4">
+                                <div className="flex justify-between items-center">
+                                    <h3 className="font-semibold text-lg">
+                                        Sản phẩm trong kho {formData.MaKho}
+                                    </h3>
+                                    <Badge variant="outline">
+                                        {totalProducts} sản phẩm
+                                    </Badge>
+                                </div>
+
+                                {warehouseProducts.length === 0 ? (
+                                    <p className="text-center text-muted-foreground py-8">
+                                        Kho này chưa có sản phẩm nào
+                                    </p>
                                 ) : (
-                                    inventory
-                                        .sort((a, b) => new Date(a.HSD) - new Date(b.HSD))
-                                        .map((batch) => (
-                                            <TableRow
-                                                key={`${batch.MaSP}-${batch.MaLo}`}
-                                                className={
-                                                    isExpired(batch.HSD)
-                                                        ? 'bg-red-50'
-                                                        : isExpiringSoon(batch.HSD)
-                                                            ? 'bg-yellow-50'
-                                                            : ''
+                                    <>
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow>
+                                                    <TableHead>Mã SP</TableHead>
+                                                    <TableHead>Tên sản phẩm</TableHead>
+                                                    <TableHead>Loại</TableHead>
+                                                    <TableHead className="text-right">Tồn kho</TableHead>
+                                                    <TableHead>ĐVT</TableHead>
+                                                    <TableHead className="text-center">Số lô</TableHead>
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {warehouseProducts.map((product) => (
+                                                    <TableRow key={product.MaSP}>
+                                                        <TableCell className="font-mono">{product.MaSP}</TableCell>
+                                                        <TableCell className="font-medium">{product.TenSP}</TableCell>
+                                                        <TableCell>{product.LoaiSP}</TableCell>
+                                                        <TableCell className="text-right font-semibold">
+                                                            {product.TotalStock}
+                                                        </TableCell>
+                                                        <TableCell>{product.DVT}</TableCell>
+                                                        <TableCell className="text-center">
+                                                            <Badge variant="secondary">{product.Batches}</Badge>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ))}
+                                            </TableBody>
+                                        </Table>
+
+                                        {/* Pagination */}
+                                        {totalPages > 1 && (
+                                            <div className="flex items-center justify-between">
+                                                <p className="text-sm text-muted-foreground">
+                                                    Trang {currentPage} / {totalPages}
+                                                </p>
+                                                <div className="flex gap-2">
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() => handlePageChange(currentPage - 1)}
+                                                        disabled={currentPage === 1 || loading}
+                                                    >
+                                                        Trước
+                                                    </Button>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() => handlePageChange(currentPage + 1)}
+                                                        disabled={currentPage === totalPages || loading}
+                                                    >
+                                                        Sau
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Add Item Section */}
+                        <div className="border rounded-lg p-4 space-y-4">
+                            <h3 className="font-semibold text-lg">Thêm Sản Phẩm Xuất</h3>
+
+                            {/* Product Selection */}
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="productSelect">Sản phẩm</Label>
+                                    <Select
+                                        value={currentItem.MaSP}
+                                        onValueChange={(value) => {
+                                            console.log('Selected product:', value)
+                                            setCurrentItem({ ...currentItem, MaSP: value })
+                                            handleProductSelect(value)
+                                        }}
+                                        disabled={loading || !formData.MaKho}
+                                    >
+                                        <SelectTrigger id="productSelect">
+                                            <SelectValue placeholder="Chọn sản phẩm" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {!formData.MaKho ? (
+                                                <div className="px-2 py-4 text-sm text-muted-foreground text-center">
+                                                    Vui lòng chọn kho trước
+                                                </div>
+                                            ) : warehouseProducts.length === 0 ? (
+                                                <div className="px-2 py-4 text-sm text-muted-foreground text-center">
+                                                    Không có sản phẩm nào trong kho này
+                                                </div>
+                                            ) : (
+                                                warehouseProducts.map((product) => (
+                                                    <SelectItem
+                                                        key={product.MaSP}
+                                                        value={product.MaSP}
+                                                    >
+                                                        {product.MaSP} - {product.TenSP} (Tồn: {product.TotalStock})
+                                                    </SelectItem>
+                                                ))
+                                            )}
+                                        </SelectContent>
+                                    </Select>
+                                    {process.env.NODE_ENV === 'development' && (
+                                        <p className="text-xs text-muted-foreground">
+                                            Sản phẩm trong kho: {warehouseProducts.length}
+                                        </p>
+                                    )}
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="MaLo">Mã lô</Label>
+                                    <Input
+                                        id="MaLo"
+                                        placeholder="Mã lô"
+                                        value={currentItem.MaLo}
+                                        onChange={(e) =>
+                                            setCurrentItem({ ...currentItem, MaLo: e.target.value })
+                                        }
+                                        disabled={loading}
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="SoLuong">Số lượng</Label>
+                                    <Input
+                                        id="SoLuong"
+                                        type="number"
+                                        min="0"
+                                        placeholder="Số lượng"
+                                        value={currentItem.SoLuong}
+                                        onChange={(e) =>
+                                            setCurrentItem({
+                                                ...currentItem,
+                                                SoLuong: parseInt(e.target.value) || 0
+                                            })
+                                        }
+                                        disabled={loading}
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label>&nbsp;</Label>
+                                    <Button
+                                        type="button"
+                                        onClick={handleAddItem}
+                                        className="w-full"
+                                        disabled={loading || !currentItem.MaSP || !currentItem.MaLo || !currentItem.SoLuong}
+                                    >
+                                        <Plus className="h-4 w-4 mr-2" />
+                                        Thêm
+                                    </Button>
+                                </div>
+                            </div>
+
+                            {/* Barcode Scanner */}
+                            <div className="border-t pt-4">
+                                <div className="flex items-center gap-4">
+                                    <div className="flex-1">
+                                        <Label htmlFor="barcode">Quét mã vạch (Barcode)</Label>
+                                        <Input
+                                            id="barcode"
+                                            placeholder="Nhập hoặc quét mã vạch..."
+                                            value={barcodeInput}
+                                            onChange={(e) => setBarcodeInput(e.target.value)}
+                                            onKeyPress={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault()
+                                                    handleBarcodeScan()
                                                 }
-                                            >
-                                                <TableCell>{batch.MaSP}</TableCell>
-                                                <TableCell>{batch.product?.TenSP || 'N/A'}</TableCell>
-                                                <TableCell>{batch.MaLo}</TableCell>
-                                                <TableCell>{formatDate(batch.NSX)}</TableCell>
-                                                <TableCell>{formatDate(batch.HSD)}</TableCell>
-                                                <TableCell className="text-right font-semibold">
-                                                    {batch.SLTon}
+                                            }}
+                                            disabled={loading || !formData.MaKho}
+                                        />
+                                    </div>
+                                    <Button
+                                        type="button"
+                                        onClick={handleBarcodeScan}
+                                        disabled={loading || !barcodeInput || !formData.MaKho}
+                                        className="mt-6"
+                                    >
+                                        <Scan className="h-4 w-4 mr-2" />
+                                        {loading ? 'Đang quét...' : 'Quét'}
+                                    </Button>
+                                </div>
+
+                                {/* Scan Result */}
+                                {scanResult && (
+                                    <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                        <div className="flex items-start gap-2">
+                                            <CheckCircle className="h-5 w-5 text-green-600 mt-0.5" />
+                                            <div className="flex-1">
+                                                <p className="font-medium text-green-900">
+                                                    Quét thành công - {scanResult.product_info?.TenSP}
+                                                </p>
+                                                <p className="text-sm text-green-700 mt-1">
+                                                    Lô: {scanResult.batch_info.MaLo} |
+                                                    Tồn kho: {scanResult.batch_info.SLTon} |
+                                                    HSD: {scanResult.batch_info.HSD || 'N/A'}
+                                                </p>
+                                                {scanResult.batch_info.days_to_expiry !== null && (
+                                                    <p className="text-sm text-green-700">
+                                                        Còn {scanResult.batch_info.days_to_expiry} ngày đến hạn
+                                                    </p>
+                                                )}
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    Thời gian phản hồi: {scanResult.responseTime?.toFixed(2)}ms
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Items List */}
+                        {formData.items.length > 0 && (
+                            <div className="border rounded-lg overflow-hidden">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Mã SP</TableHead>
+                                            <TableHead>Tên sản phẩm</TableHead>
+                                            <TableHead>Mã lô</TableHead>
+                                            <TableHead>Mã vạch</TableHead>
+                                            <TableHead className="text-right">Số lượng</TableHead>
+                                            <TableHead>ĐVT</TableHead>
+                                            <TableHead className="text-center">Thao tác</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {formData.items.map((item, index) => (
+                                            <TableRow key={index}>
+                                                <TableCell className="font-mono">{item.MaSP}</TableCell>
+                                                <TableCell>{item.TenSP}</TableCell>
+                                                <TableCell className="font-mono">{item.MaLo}</TableCell>
+                                                <TableCell className="font-mono text-sm">
+                                                    {item.MaVach || '-'}
                                                 </TableCell>
-                                                <TableCell>
-                                                    {isExpired(batch.HSD) ? (
-                                                        <span className="text-red-600 font-semibold flex items-center gap-1">
-                                                            <AlertCircle className="h-4 w-4" />
-                                                            Hết hạn
-                                                        </span>
-                                                    ) : isExpiringSoon(batch.HSD) ? (
-                                                        <span className="text-yellow-600 font-semibold flex items-center gap-1">
-                                                            <AlertCircle className="h-4 w-4" />
-                                                            Sắp hết hạn
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-green-600">Còn hạn</span>
-                                                    )}
+                                                <TableCell className="text-right font-semibold">
+                                                    {item.SoLuong}
+                                                </TableCell>
+                                                <TableCell>{item.DVT}</TableCell>
+                                                <TableCell className="text-center">
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={() => handleRemoveItem(index)}
+                                                    >
+                                                        <Trash2 className="h-4 w-4 text-red-600" />
+                                                    </Button>
                                                 </TableCell>
                                             </TableRow>
-                                        ))
-                                )}
-                            </TableBody>
-                        </Table>
-                    ) : (
-                        <p className="text-center text-gray-500 py-8">
-                            Vui lòng chọn kho để xem tồn kho
-                        </p>
-                    )}
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        )}
+
+                        {/* Submit Button */}
+                        <div className="flex justify-end gap-4">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => {
+                                    setFormData({
+                                        MaKho: '',
+                                        MucDich: '',
+                                        MaThamChieu: '',
+                                        items: []
+                                    })
+                                    setCurrentItem({
+                                        MaSP: '',
+                                        MaLo: '',
+                                        MaVach: '',
+                                        SoLuong: 0
+                                    })
+                                }}
+                                disabled={loading}
+                            >
+                                Hủy
+                            </Button>
+                            <Button
+                                type="submit"
+                                disabled={loading || formData.items.length === 0}
+                            >
+                                <PackageOpen className="h-4 w-4 mr-2" />
+                                {loading ? 'Đang xử lý...' : 'Tạo Phiếu Xuất Kho'}
+                            </Button>
+                        </div>
+                    </form>
                 </CardContent>
             </Card>
 
             {/* Export History */}
             <Card>
                 <CardHeader>
-                    <CardTitle>Lịch sử xuất kho</CardTitle>
+                    <CardTitle>Lịch Sử Xuất Kho</CardTitle>
+                    <CardDescription>
+                        Danh sách các phiếu xuất kho đã tạo
+                    </CardDescription>
                 </CardHeader>
                 <CardContent>
                     <Table>
@@ -485,41 +1080,54 @@ export default function WarehouseExport() {
                                 <TableHead>Ngày tạo</TableHead>
                                 <TableHead>Mục đích</TableHead>
                                 <TableHead>Mã tham chiếu</TableHead>
-                                <TableHead className="text-right">Số lượng mặt hàng</TableHead>
+                                <TableHead className="text-center">Số mặt hàng</TableHead>
                                 <TableHead className="text-center">Thao tác</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {exportsLoading ? (
+                            {exports.length === 0 ? (
                                 <TableRow>
-                                    <TableCell colSpan={6} className="text-center">
-                                        Đang tải...
-                                    </TableCell>
-                                </TableRow>
-                            ) : exports.length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={6} className="text-center text-gray-500">
-                                        Chưa có phiếu xuất kho
+                                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                                        Chưa có phiếu xuất kho nào
                                     </TableCell>
                                 </TableRow>
                             ) : (
                                 exports.map((phieu) => (
-                                    <TableRow key={phieu.MaPhieu}>
-                                        <TableCell className="font-mono">{phieu.MaPhieu}</TableCell>
-                                        <TableCell>{formatDateTime(phieu.NgayTao)}</TableCell>
-                                        <TableCell>{phieu.MucDich}</TableCell>
-                                        <TableCell>{phieu.MaThamChieu || 'N/A'}</TableCell>
-                                        <TableCell className="text-right">
-                                            {phieu.items?.length || 0}
+                                    <TableRow key={phieu.MaPhieu || phieu.id}>
+                                        <TableCell className="font-mono font-semibold">
+                                            {phieu.MaPhieu}
+                                        </TableCell>
+                                        <TableCell>
+                                            {phieu.NgayTao ? new Date(phieu.NgayTao).toLocaleString('vi-VN') : '-'}
+                                        </TableCell>
+                                        <TableCell>{phieu.MucDich || '-'}</TableCell>
+                                        <TableCell className="font-mono">
+                                            {phieu.MaThamChieu || '-'}
                                         </TableCell>
                                         <TableCell className="text-center">
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => handleViewDetail(phieu)}
-                                            >
-                                                <Eye className="h-4 w-4" />
-                                            </Button>
+                                            <Badge variant="secondary">
+                                                {Array.isArray(phieu.items) ? phieu.items.length : 0}
+                                            </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-center">
+                                            <div className="flex justify-center gap-2">
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => handleViewExport(phieu.MaPhieu)}
+                                                    title="Xem chi tiết"
+                                                >
+                                                    <FileText className="h-4 w-4" />
+                                                </Button>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => handleDeleteExport(phieu.MaPhieu)}
+                                                    title="Xóa phiếu"
+                                                >
+                                                    <Trash2 className="h-4 w-4 text-red-600" />
+                                                </Button>
+                                            </div>
                                         </TableCell>
                                     </TableRow>
                                 ))
@@ -529,303 +1137,136 @@ export default function WarehouseExport() {
                 </CardContent>
             </Card>
 
-            {/* Export Dialog */}
-            <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
-                <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+            {/* FEFO Dialog */}
+            <Dialog open={showFEFODialog} onOpenChange={setShowFEFODialog}>
+                <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>UC04: Tạo phiếu xuất kho (FEFO + Barcode Validation)</DialogTitle>
+                        <DialogTitle>
+                            Gợi ý lô hàng FEFO - {selectedProduct?.TenSP}
+                        </DialogTitle>
                         <DialogDescription>
-                            UC04: Xuất kho theo logic nghiệp vụ - Bắt buộc quét mã vạch và tuân thủ FEFO
+                            Chọn lô hàng để xuất (ưu tiên lô có HSD gần nhất)
                         </DialogDescription>
                     </DialogHeader>
 
                     <div className="space-y-4">
-                        {/* Warehouse Selection */}
-                        <div className="space-y-2">
-                            <Label>Kho xuất *</Label>
-                            <Select value={selectedWarehouse} onValueChange={setSelectedWarehouse}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Chọn kho" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {warehouses.map((w) => (
-                                        <SelectItem key={w.MaKho} value={w.MaKho}>
-                                            {w.MaKho} - {w.DiaChi} ({w.Loai})
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
-                        </div>
-
-                        {/* Purpose */}
-                        <div className="space-y-2">
-                            <Label>Mục đích</Label>
-                            <Input
-                                value={mucDich}
-                                onChange={(e) => setMucDich(e.target.value)}
-                                placeholder="Xuất bán hàng"
-                            />
-                        </div>
-
-                        {/* Reference */}
-                        <div className="space-y-2">
-                            <Label>Mã tham chiếu (Hóa đơn, đơn hàng, ...)</Label>
-                            <Input
-                                value={maThamChieu}
-                                onChange={(e) => setMaThamChieu(e.target.value)}
-                                placeholder="HD001, ORDER-001, ..."
-                            />
-                        </div>
-
-                        {/* Items */}
-                        <div className="space-y-2">
-                            <div className="flex justify-between items-center">
-                                <Label>Sản phẩm xuất kho *</Label>
-                                <Button type="button" size="sm" onClick={addExportItem}>
-                                    <Plus className="h-4 w-4 mr-1" />
-                                    Thêm sản phẩm
-                                </Button>
-                            </div>
-
-                            <div className="space-y-3 max-h-[400px] overflow-y-auto">
-                                {exportItems.map((item, index) => {
-                                    const suggestion = fefoSuggestions[item.id];
-                                    const canFulfill = suggestion?.can_fulfill;
-                                    const shortage = suggestion?.shortage || 0;
-
-                                    return (
-                                        <Card key={item.id}>
-                                            <CardContent className="pt-4">
-                                                <div className="space-y-3">
-                                                    <div className="grid grid-cols-12 gap-2">
-                                                        <div className="col-span-12 sm:col-span-4">
-                                                            <Label className="text-xs">Sản phẩm *</Label>
-                                                            <Select
-                                                                value={item.MaSP}
-                                                                onValueChange={(val) =>
-                                                                    updateExportItem(item.id, 'MaSP', val)
-                                                                }
-                                                            >
-                                                                <SelectTrigger>
-                                                                    <SelectValue placeholder="Chọn SP" />
-                                                                </SelectTrigger>
-                                                                <SelectContent>
-                                                                    {products.map((p) => (
-                                                                        <SelectItem key={p.MaSP} value={p.MaSP}>
-                                                                            {p.MaSP} - {p.TenSP}
-                                                                        </SelectItem>
-                                                                    ))}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        </div>
-
-                                                        <div className="col-span-4 sm:col-span-2">
-                                                            <Label className="text-xs">Số lượng *</Label>
-                                                            <Input
-                                                                type="number"
-                                                                min="1"
-                                                                value={item.SoLuong}
-                                                                onChange={(e) =>
-                                                                    updateExportItem(item.id, 'SoLuong', e.target.value)
-                                                                }
-                                                            />
-                                                        </div>
-
-                                                        <div className="col-span-8 sm:col-span-3">
-                                                            <Label className="text-xs">
-                                                                Mã vạch * (UC04)
-                                                            </Label>
-                                                            <div className="flex gap-1">
-                                                                <Input
-                                                                    value={item.MaVach}
-                                                                    onChange={(e) =>
-                                                                        updateExportItem(item.id, 'MaVach', e.target.value)
-                                                                    }
-                                                                    placeholder="Quét mã vạch"
-                                                                    className="flex-1"
-                                                                />
-                                                                <Button
-                                                                    type="button"
-                                                                    size="sm"
-                                                                    variant={barcodeValidation[item.id]?.valid ? "default" : "outline"}
-                                                                    onClick={() => validateBarcode(item.id, item.MaVach)}
-                                                                    disabled={!item.MaVach || !item.MaSP || !selectedWarehouse}
-                                                                >
-                                                                    <Scan className="h-3 w-3" />
-                                                                </Button>
-                                                            </div>
-                                                            {barcodeValidation[item.id] && (
-                                                                <div className={`text-xs mt-1 ${
-                                                                    barcodeValidation[item.id].valid 
-                                                                        ? 'text-green-600' 
-                                                                        : 'text-red-600'
-                                                                }`}>
-                                                                    {barcodeValidation[item.id].valid ? '✅' : '❌'} {barcodeValidation[item.id].message}
-                                                                </div>
-                                                            )}
-                                                        </div>
-
-                                                        <div className="col-span-8 sm:col-span-2">
-                                                            <Label className="text-xs">
-                                                                Mã lô (Auto-fill)
-                                                            </Label>
-                                                            <Input
-                                                                value={item.MaLo}
-                                                                onChange={(e) =>
-                                                                    updateExportItem(item.id, 'MaLo', e.target.value)
-                                                                }
-                                                                placeholder="Tự động"
-                                                                readOnly
-                                                                className="bg-gray-50"
-                                                            />
-                                                        </div>
-
-                                                        <div className="col-span-4 sm:col-span-1 flex items-end">
-                                                            <Button
-                                                                type="button"
-                                                                variant="destructive"
-                                                                size="icon"
-                                                                onClick={() => removeExportItem(item.id)}
-                                                            >
-                                                                <Trash2 className="h-4 w-4" />
-                                                            </Button>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* FEFO Suggestion Display */}
-                                                    {suggestion && (
-                                                        <div
-                                                            className={`p-3 rounded-md text-sm ${canFulfill
-                                                                ? 'bg-green-50 border border-green-200'
-                                                                : 'bg-red-50 border border-red-200'
-                                                                }`}
-                                                        >
-                                                            {canFulfill ? (
-                                                                <div>
-                                                                    <p className="font-semibold text-green-800 mb-2">
-                                                                        ✓ Đủ hàng - Gợi ý FEFO:
-                                                                    </p>
-                                                                    {suggestion.suggested_batches?.map((batch, idx) => (
-                                                                        <div
-                                                                            key={idx}
-                                                                            className="text-xs text-green-700 ml-4"
-                                                                        >
-                                                                            • Lô {batch.MaLo} - HSD: {formatDate(batch.HSD)}
-                                                                            - Xuất: {batch.suggested_quantity} (Tồn: {batch.SLTon})
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
-                                                            ) : (
-                                                                <p className="font-semibold text-red-800">
-                                                                    ✗ Không đủ hàng - Thiếu: {shortage}
-                                                                </p>
-                                                            )}
+                        {fefoBatches.length === 0 ? (
+                            <p className="text-center text-muted-foreground py-8">
+                                Không có lô hàng khả dụng
+                            </p>
+                        ) : (
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Ưu tiên</TableHead>
+                                        <TableHead>Mã lô</TableHead>
+                                        <TableHead>NSX</TableHead>
+                                        <TableHead>HSD</TableHead>
+                                        <TableHead>Tồn kho</TableHead>
+                                        <TableHead>Gợi ý SL</TableHead>
+                                        <TableHead>Trạng thái</TableHead>
+                                        <TableHead>Thao tác</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {fefoBatches.map((batch) => (
+                                        <TableRow
+                                            key={batch.MaLo}
+                                            className={batch.is_expired ? 'bg-red-50' : ''}
+                                        >
+                                            <TableCell>
+                                                <Badge variant={batch.priority === 1 ? 'default' : 'secondary'}>
+                                                    #{batch.priority}
+                                                </Badge>
+                                            </TableCell>
+                                            <TableCell className="font-mono">
+                                                {batch.MaLo}
+                                            </TableCell>
+                                            <TableCell>
+                                                {batch.NSX || '-'}
+                                            </TableCell>
+                                            <TableCell>
+                                                <div>
+                                                    <div>{batch.HSD || '-'}</div>
+                                                    {batch.days_to_expiry !== null && (
+                                                        <div className="text-xs text-muted-foreground">
+                                                            ({batch.days_to_expiry} ngày)
                                                         </div>
                                                     )}
                                                 </div>
-                                            </CardContent>
-                                        </Card>
-                                    );
-                                })}
-
-                                {exportItems.length === 0 && (
-                                    <p className="text-center text-gray-500 py-8">
-                                        Chưa có sản phẩm nào. Nhấn "Thêm sản phẩm" để bắt đầu.
-                                    </p>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* UC04: Preview Section */}
-                        {previewData && (
-                            <Card className="border-blue-200 bg-blue-50">
-                                <CardHeader className="pb-3">
-                                    <CardTitle className="text-lg flex items-center gap-2">
-                                        <Eye className="w-5 h-5" />
-                                        Xem trước xuất kho
-                                    </CardTitle>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="space-y-2">
-                                        {previewData.preview.map((item, index) => (
-                                            <div key={index} className="flex items-center justify-between text-sm p-2 bg-white rounded">
-                                                <span className="font-medium">{item.product.TenSP}</span>
-                                                <div className="flex items-center gap-4">
-                                                    <span>Yêu cầu: {item.requested_quantity}</span>
-                                                    <span>Có sẵn: {item.total_available}</span>
-                                                    <Badge variant={item.can_fulfill ? "default" : "destructive"}>
-                                                        {item.can_fulfill ? "✅ Đủ hàng" : `❌ Thiếu ${item.shortage}`}
+                                            </TableCell>
+                                            <TableCell className="font-semibold">
+                                                {batch.SLTon}
+                                            </TableCell>
+                                            <TableCell>
+                                                {batch.suggested_quantity > 0 ? (
+                                                    <Badge variant="outline">
+                                                        {batch.suggested_quantity}
                                                     </Badge>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        <div className="font-medium text-center pt-2 border-t">
-                                            Tổng quan: {previewData.can_fulfill_all ? 
-                                                "✅ Có thể xuất tất cả" : 
-                                                "❌ Một số sản phẩm không đủ hàng"
-                                            }
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
+                                                ) : '-'}
+                                            </TableCell>
+                                            <TableCell>
+                                                {batch.is_expired ? (
+                                                    <Badge variant="destructive">
+                                                        <XCircle className="h-3 w-3 mr-1" />
+                                                        Hết hạn
+                                                    </Badge>
+                                                ) : (
+                                                    getStatusBadge(batch.status)
+                                                )}
+                                            </TableCell>
+                                            <TableCell>
+                                                <Button
+                                                    size="sm"
+                                                    onClick={() => handleSelectBatch(batch)}
+                                                    disabled={batch.is_expired}
+                                                >
+                                                    Chọn
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
                         )}
                     </div>
-
-                    <DialogFooter>
-                        <Button variant="outline" onClick={resetForm}>
-                            Hủy
-                        </Button>
-                        <Button
-                            variant="outline"
-                            onClick={previewExport}
-                            disabled={!selectedWarehouse || exportItems.length === 0}
-                        >
-                            <Eye className="h-4 w-4 mr-2" />
-                            Xem trước
-                        </Button>
-                        <Button
-                            onClick={handleSubmitExport}
-                            disabled={exportMutation.isPending}
-                        >
-                            {exportMutation.isPending ? 'Đang xử lý...' : 'Tạo phiếu xuất'}
-                        </Button>
-                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 
             {/* Detail Dialog */}
             <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
-                <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
                     <DialogHeader>
-                        <DialogTitle>Chi tiết phiếu xuất kho</DialogTitle>
-                        <DialogDescription>
-                            {selectedExport && `Mã phiếu: ${selectedExport.MaPhieu}`}
-                        </DialogDescription>
+                        <DialogTitle>
+                            Chi tiết phiếu xuất - {viewingExport?.MaPhieu}
+                        </DialogTitle>
                     </DialogHeader>
 
-                    {selectedExport && (
+                    {viewingExport && (
                         <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
+                            {/* Basic Info */}
+                            <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
                                 <div>
-                                    <Label className="font-semibold">Ngày tạo:</Label>
-                                    <p>{formatDateTime(selectedExport.NgayTao)}</p>
+                                    <p className="text-sm text-muted-foreground">Mã phiếu</p>
+                                    <p className="font-mono font-semibold">{viewingExport.MaPhieu}</p>
                                 </div>
                                 <div>
-                                    <Label className="font-semibold">Mục đích:</Label>
-                                    <p>{selectedExport.MucDich}</p>
+                                    <p className="text-sm text-muted-foreground">Ngày tạo</p>
+                                    <p>{new Date(viewingExport.NgayTao).toLocaleString('vi-VN')}</p>
                                 </div>
                                 <div>
-                                    <Label className="font-semibold">Mã tham chiếu:</Label>
-                                    <p>{selectedExport.MaThamChieu || 'N/A'}</p>
+                                    <p className="text-sm text-muted-foreground">Mục đích</p>
+                                    <p>{viewingExport.MucDich}</p>
                                 </div>
                                 <div>
-                                    <Label className="font-semibold">Tổng số lô:</Label>
-                                    <p>{selectedExport.items?.length || 0}</p>
+                                    <p className="text-sm text-muted-foreground">Mã tham chiếu</p>
+                                    <p className="font-mono">{viewingExport.MaThamChieu || '-'}</p>
                                 </div>
                             </div>
 
+                            {/* Items */}
                             <div>
-                                <Label className="font-semibold mb-2 block">Chi tiết sản phẩm:</Label>
+                                <h4 className="font-semibold mb-2">Danh sách sản phẩm</h4>
                                 <Table>
                                     <TableHeader>
                                         <TableRow>
@@ -834,18 +1275,20 @@ export default function WarehouseExport() {
                                             <TableHead>Mã lô</TableHead>
                                             <TableHead>NSX</TableHead>
                                             <TableHead>HSD</TableHead>
-                                            <TableHead className="text-right">Số lượng xuất</TableHead>
+                                            <TableHead className="text-right">Số lượng</TableHead>
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
-                                        {selectedExport.items?.map((item, index) => (
+                                        {viewingExport.items?.map((item, index) => (
                                             <TableRow key={index}>
-                                                <TableCell>{item.MaSP}</TableCell>
-                                                <TableCell>{item.product?.TenSP || 'N/A'}</TableCell>
-                                                <TableCell>{item.MaLo}</TableCell>
-                                                <TableCell>{formatDate(item.NSX)}</TableCell>
-                                                <TableCell>{formatDate(item.HSD)}</TableCell>
-                                                <TableCell className="text-right">{item.exported_quantity || item.SLTon}</TableCell>
+                                                <TableCell className="font-mono">{item.MaSP}</TableCell>
+                                                <TableCell>{item.TenSP}</TableCell>
+                                                <TableCell className="font-mono">{item.MaLo}</TableCell>
+                                                <TableCell>{item.NSX || '-'}</TableCell>
+                                                <TableCell>{item.HSD || '-'}</TableCell>
+                                                <TableCell className="text-right font-semibold">
+                                                    {item.SoLuong} {item.DVT}
+                                                </TableCell>
                                             </TableRow>
                                         ))}
                                     </TableBody>
@@ -853,14 +1296,8 @@ export default function WarehouseExport() {
                             </div>
                         </div>
                     )}
-
-                    <DialogFooter>
-                        <Button onClick={() => setShowDetailDialog(false)}>
-                            Đóng
-                        </Button>
-                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </div>
-    );
+    )
 }

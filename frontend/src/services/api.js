@@ -78,8 +78,8 @@ export const warehouseService = {
         return response.data
     },
 
-    getWarehouseInventory: async (maKho) => {
-        const response = await api.get(`/warehouse/warehouses/${maKho}/inventory`)
+    getWarehouseInventory: async (maKho, params) => {
+        const response = await api.get(`/warehouse/warehouses/${maKho}/inventory`, { params })
         return response.data
     },
 
@@ -109,7 +109,7 @@ export const warehouseService = {
         return response.data
     },
 
-    // UC04: Export (FEFO)
+    // UC04: Export
     getExports: async () => {
         const response = await api.get('/warehouse/export')
         return response.data
@@ -120,6 +120,16 @@ export const warehouseService = {
         return response.data
     },
 
+    getFEFOBatches: async (data) => {
+        const response = await api.post('/warehouse/export/fefo-batches', data)
+        return response.data
+    },
+
+    scanBarcodeForExport: async (data) => {
+        const response = await api.post('/warehouse/export/scan-barcode', data)
+        return response.data
+    },
+
     exportWarehouse: async (data) => {
         const response = await api.post('/warehouse/export', data)
         return response.data
@@ -127,11 +137,6 @@ export const warehouseService = {
 
     deleteExport: async (id) => {
         const response = await api.delete(`/warehouse/export/${id}`)
-        return response.data
-    },
-
-    suggestFEFO: async (data) => {
-        const response = await api.post('/warehouse/export/suggest-fefo', data)
         return response.data
     },
 
