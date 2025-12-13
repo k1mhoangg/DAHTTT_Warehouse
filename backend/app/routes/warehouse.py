@@ -855,4 +855,166 @@ def delete_export(ma_phieu):
         return error_response(f"Error deleting export receipt: {str(e)}", 500)
 
 
-# Continue in next part...
+# =============================================
+# UC03: NHẬP KHO - ENHANCED
+# =============================================
+
+@warehouse_bp.route('/import/suppliers', methods=['GET'])
+@jwt_required()
+def get_suppliers_for_import():
+    """Get suppliers list for import purposes"""
+    try:
+        from app.models import NhaCungCap
+        suppliers = NhaCungCap.query.all()
+        return success_response({
+            'suppliers': [{'Ten': s.Ten, 'PhuongThucLienHe': s.PhuongThucLienHe} for s in suppliers],
+            'total': len(suppliers)
+        })
+    except Exception as e:
+        return error_response(f"Error getting suppliers: {str(e)}", 500)
+
+
+@warehouse_bp.route('/import/validate-batch', methods=['POST'])
+@jwt_required()
+def validate_batch_code():
+    """
+    Validate if batch code already exists
+    
+    Request body:
+        {
+            "MaSP": "string",
+            "MaLo": "string"
+        }
+    """
+    data = request.get_json()
+    ma_sp = data.get('MaSP')
+    ma_lo = data.get('MaLo')
+    
+    if not ma_sp or not ma_lo:
+        return error_response("MaSP and MaLo are required", 400)
+    
+    existing_batch = LoSP.query.filter_by(MaSP=ma_sp, MaLo=ma_lo).first()
+    
+    return success_response({
+        'exists': existing_batch is not None,
+        'batch_info': existing_batch.to_dict() if existing_batch else None
+    })
+
+
+@warehouse_bp.route('/import/generate-batch', methods=['POST'])
+@jwt_required()
+def generate_batch_code():
+    """
+    Generate unique batch code for a product
+    
+    Request body:
+        {
+            "MaSP": "string"
+        }
+    
+    Response: Generated batch code
+    """
+    data = request.get_json()
+    ma_sp = data.get('MaSP')
+    
+    if not ma_sp:
+        return error_response("MaSP is required", 400)
+    
+    # Generate unique batch code
+    import time
+    ma_lo = f"LO{int(time.time() * 1000) % 1000000:06d}"
+    
+    # Ensure uniqueness
+    while LoSP.query.filter_by(MaSP=ma_sp, MaLo=ma_lo).first():
+        ma_lo = f"LO{int(time.time() * 1000) % 1000000:06d}"
+    
+    return success_response({
+        'MaLo': ma_lo,
+        'MaSP': ma_sp
+    })
+
+
+@warehouse_bp.route('/import/preview', methods=['POST'])
+@jwt_required()
+def preview_import():
+    """
+    Preview import before submission - validate all items
+    
+    Request body: Same as import_warehouse
+    
+    Response: Validation results and warnings
+    """
+    data = request.get_json()
+    
+    # Validate
+    if not data.get('MaKho') or not data.get('items'):
+        return error_response("MaKho and items are required", 400)
+    
+    # Check warehouse exists
+    kho = KhoHang.query.get(data['MaKho'])
+    if not kho:
+        return error_response("Warehouse not found", 404)
+    
+    warnings = []
+    errors = []
+    preview_items = []
+    
+    for idx, item in enumerate(data['items']):
+        ma_sp = item.get('MaSP')
+        so_luong = item.get('SoLuong', 0)
+        ma_lo = item.get('MaLo')
+        
+        item_preview = {
+            'index': idx,
+            'MaSP': ma_sp,
+            'SoLuong': so_luong,
+            'MaLo': ma_lo,
+            'status': 'ok'
+        }
+        
+        # Validate product
+        san_pham = SanPham.query.get(ma_sp)
+        if not san_pham:
+            errors.append(f"Dòng {idx + 1}: Sản phẩm {ma_sp} không tồn tại")
+            item_preview['status'] = 'error'
+            item_preview['error'] = 'Product not found'
+        else:
+            item_preview['TenSP'] = san_pham.TenSP
+            item_preview['DVT'] = san_pham.DVT
+        
+        # Check if batch exists
+        if ma_lo:
+            existing_batch = LoSP.query.filter_by(MaSP=ma_sp, MaLo=ma_lo).first()
+            if existing_batch:
+                warnings.append(f"Dòng {idx + 1}: Lô {ma_lo} đã tồn tại, sẽ cập nhật số lượng")
+                item_preview['existing_quantity'] = existing_batch.SLTon
+                item_preview['new_quantity'] = existing_batch.SLTon + so_luong
+        
+        # Check quantity
+        if so_luong <= 0:
+            errors.append(f"Dòng {idx + 1}: Số lượng phải lớn hơn 0")
+            item_preview['status'] = 'error'
+        
+        # Check expiry date
+        if item.get('HSD'):
+            try:
+                hsd = parse_date(item.get('HSD'))
+                if hsd and hsd < datetime.utcnow().date():
+                    warnings.append(f"Dòng {idx + 1}: HSD {item.get('HSD')} đã hết hạn")
+                    item_preview['status'] = 'warning'
+            except:
+                errors.append(f"Dòng {idx + 1}: Định dạng HSD không hợp lệ")
+        
+        preview_items.append(item_preview)
+    
+    return success_response({
+        'valid': len(errors) == 0,
+        'warnings': warnings,
+        'errors': errors,
+        'items': preview_items,
+        'summary': {
+            'total_items': len(data['items']),
+            'total_quantity': sum(item.get('SoLuong', 0) for item in data['items']),
+            'warehouse': kho.to_dict()
+        }
+    })

@@ -88,7 +88,7 @@ export const warehouseService = {
         return response.data
     },
 
-    // UC03: Import
+    // UC03: Import - Enhanced
     getImports: async () => {
         const response = await api.get('/warehouse/import')
         return response.data
@@ -106,6 +106,27 @@ export const warehouseService = {
 
     deleteImport: async (id) => {
         const response = await api.delete(`/warehouse/import/${id}`)
+        return response.data
+    },
+
+    // New endpoints for UC03
+    getSuppliersForImport: async () => {
+        const response = await api.get('/warehouse/import/suppliers')
+        return response.data
+    },
+
+    validateBatchCode: async (data) => {
+        const response = await api.post('/warehouse/import/validate-batch', data)
+        return response.data
+    },
+
+    generateBatchCode: async (data) => {
+        const response = await api.post('/warehouse/import/generate-batch', data)
+        return response.data
+    },
+
+    previewImport: async (data) => {
+        const response = await api.post('/warehouse/import/preview', data)
         return response.data
     },
 
