@@ -136,16 +136,23 @@ def create_order():
             san_pham = SanPham.query.get(item.get('MaSP'))
             if not san_pham:
                 return error_response(f"Product {item.get('MaSP')} not found", 404)
-            if item.get('SoLuongDat', 0) <= 0:
+            
+            # Convert SoLuongDat to int and validate
+            try:
+                so_luong_dat = int(item.get('SoLuongDat', 0))
+            except (ValueError, TypeError):
                 return error_response(f"Invalid quantity for {item.get('MaSP')}", 400)
             
-            item_total = float(san_pham.GiaBan) * item['SoLuongDat']
+            if so_luong_dat <= 0:
+                return error_response(f"Quantity must be greater than 0 for {item.get('MaSP')}", 400)
+            
+            item_total = float(san_pham.GiaBan) * so_luong_dat
             total_amount += item_total
             
             order_items.append({
                 'MaSP': item['MaSP'],
                 'TenSP': san_pham.TenSP,
-                'SoLuongDat': item['SoLuongDat'],
+                'SoLuongDat': so_luong_dat,
                 'DVT': san_pham.DVT,
                 'GiaBan': float(san_pham.GiaBan),
                 'GhiChu': item.get('GhiChu', ''),
