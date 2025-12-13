@@ -421,8 +421,157 @@ def delete_inventory(ma_phieu):
 
 
 # =============================================
-# UC07: ĐIỀU CHỈNH KHO
+# UC07: ĐIỀU CHỈNH KHO - ENHANCED
 # =============================================
+
+@warehouse_inventory_bp.route('/adjustment', methods=['GET'])
+@jwt_required()
+def get_adjustable_inventories():
+    """
+    Get list of inventories that have discrepancies and can be adjusted
+    
+    Response: List of PhieuKiemKho with discrepancy information
+    """
+    try:
+        # Get all completed inventory checks
+        phieu_list = PhieuKiemKho.query.order_by(PhieuKiemKho.NgayTao.desc()).all()
+        
+        result = []
+        for phieu in phieu_list:
+            # Get all reports for this inventory
+            bao_caos = BaoCao.query.filter_by(MaPhieu=phieu.MaPhieu).all()
+            
+            if not bao_caos:
+                continue
+            
+            # Count discrepancies
+            total_discrepancies = 0
+            items_with_discrepancy = []
+            
+            for bao_cao in bao_caos:
+                batch = LoSP.query.filter_by(
+                    MaPhieuKiem=phieu.MaPhieu,
+                    MaBaoCao=bao_cao.MaBaoCao
+                ).first()
+                
+                if batch:
+                    chenh_lech = bao_cao.SLThucTe - batch.SLTon
+                    if chenh_lech != 0:
+                        total_discrepancies += 1
+                        from app.models import SanPham
+                        san_pham = SanPham.query.get(batch.MaSP)
+                        
+                        items_with_discrepancy.append({
+                            'MaSP': batch.MaSP,
+                            'TenSP': san_pham.TenSP if san_pham else batch.MaSP,
+                            'MaLo': batch.MaLo,
+                            'SLHeThong': batch.SLTon,
+                            'SLThucTe': bao_cao.SLThucTe,
+                            'ChenhLech': chenh_lech
+                        })
+            
+            if total_discrepancies > 0:
+                from app.models import KhoHang
+                kho = KhoHang.query.get(phieu.MaKho)
+                
+                result.append({
+                    **phieu.to_dict(),
+                    'warehouse': kho.to_dict() if kho else None,
+                    'total_discrepancies': total_discrepancies,
+                    'items_with_discrepancy': items_with_discrepancy,
+                    'can_adjust': True
+                })
+        
+        return success_response({
+            'inventories': result,
+            'total': len(result)
+        })
+    except Exception as e:
+        return error_response(f"Error getting adjustable inventories: {str(e)}", 500)
+
+
+@warehouse_inventory_bp.route('/adjustment/preview', methods=['POST'])
+@jwt_required()
+def preview_adjustment():
+    """
+    Preview adjustment before creating receipts
+    
+    Request body:
+        {
+            "MaPhieuKiem": "string"
+        }
+    
+    Response: Preview of receipts to be created
+    """
+    data = request.get_json()
+    
+    ma_phieu_kiem = data.get('MaPhieuKiem')
+    if not ma_phieu_kiem:
+        return error_response("MaPhieuKiem is required", 400)
+    
+    phieu_kiem = PhieuKiemKho.query.get(ma_phieu_kiem)
+    if not phieu_kiem:
+        return error_response("Phiếu kiểm kho not found", 404)
+    
+    # Get all reports
+    bao_caos = BaoCao.query.filter_by(MaPhieu=ma_phieu_kiem).all()
+    
+    phieu_nhap_preview = []
+    phieu_xuat_preview = []
+    
+    for bao_cao in bao_caos:
+        batch = LoSP.query.filter_by(
+            MaPhieuKiem=ma_phieu_kiem,
+            MaBaoCao=bao_cao.MaBaoCao
+        ).first()
+        
+        if not batch:
+            continue
+        
+        sl_he_thong = batch.SLTon
+        sl_thuc_te = bao_cao.SLThucTe
+        chenh_lech = sl_thuc_te - sl_he_thong
+        
+        if chenh_lech == 0:
+            continue
+        
+        from app.models import SanPham
+        san_pham = SanPham.query.get(batch.MaSP)
+        
+        if chenh_lech > 0:
+            # Surplus - will create import receipt
+            phieu_nhap_preview.append({
+                'MaSP': batch.MaSP,
+                'TenSP': san_pham.TenSP if san_pham else batch.MaSP,
+                'MaLo': batch.MaLo,
+                'SoLuong': chenh_lech,
+                'SLHeThong': sl_he_thong,
+                'SLThucTe': sl_thuc_te,
+                'Type': 'increase'
+            })
+        else:
+            # Shortage - will create export receipt
+            phieu_xuat_preview.append({
+                'MaSP': batch.MaSP,
+                'TenSP': san_pham.TenSP if san_pham else batch.MaSP,
+                'MaLo': batch.MaLo,
+                'SoLuong': abs(chenh_lech),
+                'SLHeThong': sl_he_thong,
+                'SLThucTe': sl_thuc_te,
+                'Type': 'decrease'
+            })
+    
+    return success_response({
+        'phieu_kiem': phieu_kiem.to_dict(),
+        'import_receipts': phieu_nhap_preview,
+        'export_receipts': phieu_xuat_preview,
+        'total_adjustments': len(phieu_nhap_preview) + len(phieu_xuat_preview),
+        'summary': {
+            'total_increase': sum(item['SoLuong'] for item in phieu_nhap_preview),
+            'total_decrease': sum(item['SoLuong'] for item in phieu_xuat_preview)
+        }
+    })
+
 
 @warehouse_inventory_bp.route('/adjustment', methods=['POST'])
 @jwt_required()
@@ -437,7 +586,15 @@ def adjust_inventory():
         }
     """
     data = request.get_json()
-    claims = get_jwt_identity()
+    identity = get_jwt_identity()
+    
+    # Handle both string and dict identity formats
+    if isinstance(identity, str):
+        ma_nv = identity
+    elif isinstance(identity, dict):
+        ma_nv = identity.get('id') or identity.get('MaNV') or identity.get('username')
+    else:
+        ma_nv = str(identity)
     
     ma_phieu_kiem = data.get('MaPhieuKiem')
     if not ma_phieu_kiem:
@@ -470,9 +627,14 @@ def adjust_inventory():
         if chenh_lech == 0:
             continue  # No adjustment needed
         
+        from app.models import SanPham
+        san_pham = SanPham.query.get(batch.MaSP)
+        
         if chenh_lech > 0:
-            # Thừa -> Tạo phiếu nhập
+            # Surplus -> Create import receipt
             ma_phieu_nhap = generate_id('PNK', 6)
+            while PhieuNhapKho.query.get(ma_phieu_nhap):
+                ma_phieu_nhap = generate_id('PNK', 6)
             
             phieu_nhap = PhieuNhapKho(
                 MaPhieu=ma_phieu_nhap,
@@ -487,19 +649,23 @@ def adjust_inventory():
             batch.SLTon = sl_thuc_te
             batch.MaPhieuNK = ma_phieu_nhap
             
-            tao_phieu = TaoPhieu(MaNV=claims['id'], MaPhieuTao=ma_phieu_nhap)
+            tao_phieu = TaoPhieu(MaNV=ma_nv, MaPhieuTao=ma_phieu_nhap)
             db.session.add(tao_phieu)
             
             phieu_nhap_list.append({
                 'MaPhieu': ma_phieu_nhap,
                 'MaSP': batch.MaSP,
+                'TenSP': san_pham.TenSP if san_pham else batch.MaSP,
                 'MaLo': batch.MaLo,
-                'SoLuong': chenh_lech
+                'SoLuong': chenh_lech,
+                'Type': 'increase'
             })
             
         else:  # chenh_lech < 0
-            # Thiếu -> Tạo phiếu xuất
+            # Shortage -> Create export receipt
             ma_phieu_xuat = generate_id('PXK', 6)
+            while PhieuXuatKho.query.get(ma_phieu_xuat):
+                ma_phieu_xuat = generate_id('PXK', 6)
             
             phieu_xuat = PhieuXuatKho(
                 MaPhieu=ma_phieu_xuat,
@@ -514,14 +680,16 @@ def adjust_inventory():
             batch.SLTon = sl_thuc_te
             batch.MaPhieuXK = ma_phieu_xuat
             
-            tao_phieu = TaoPhieu(MaNV=claims['id'], MaPhieuTao=ma_phieu_xuat)
+            tao_phieu = TaoPhieu(MaNV=ma_nv, MaPhieuTao=ma_phieu_xuat)
             db.session.add(tao_phieu)
             
             phieu_xuat_list.append({
                 'MaPhieu': ma_phieu_xuat,
                 'MaSP': batch.MaSP,
+                'TenSP': san_pham.TenSP if san_pham else batch.MaSP,
                 'MaLo': batch.MaLo,
-                'SoLuong': abs(chenh_lech)
+                'SoLuong': abs(chenh_lech),
+                'Type': 'decrease'
             })
     
     db.session.commit()
@@ -529,8 +697,67 @@ def adjust_inventory():
     return success_response({
         'phieu_nhap': phieu_nhap_list,
         'phieu_xuat': phieu_xuat_list,
-        'total_adjustments': len(phieu_nhap_list) + len(phieu_xuat_list)
-    }, message="Adjustment completed")
+        'total_adjustments': len(phieu_nhap_list) + len(phieu_xuat_list),
+        'summary': {
+            'import_receipts': len(phieu_nhap_list),
+            'export_receipts': len(phieu_xuat_list),
+            'total_increase': sum(item['SoLuong'] for item in phieu_nhap_list),
+            'total_decrease': sum(item['SoLuong'] for item in phieu_xuat_list)
+        }
+    }, message="Adjustment completed successfully")
+
+
+@warehouse_inventory_bp.route('/adjustment/history', methods=['GET'])
+@jwt_required()
+def get_adjustment_history():
+    """
+    Get history of all adjustments made
+    
+    Response: List of adjustment receipts
+    """
+    try:
+        # Get all import/export receipts that are adjustments
+        phieu_nhap_list = PhieuNhapKho.query.filter(
+            PhieuNhapKho.MucDich.like('%Điều chỉnh%')
+        ).order_by(PhieuNhapKho.NgayTao.desc()).all()
+        
+        phieu_xuat_list = PhieuXuatKho.query.filter(
+            PhieuXuatKho.MucDich.like('%Điều chỉnh%')
+        ).order_by(PhieuXuatKho.NgayTao.desc()).all()
+        
+        # Group by MaThamChieu (MaPhieuKiem)
+        adjustments_map = {}
+        
+        for phieu in phieu_nhap_list:
+            if phieu.MaThamChieu:
+                if phieu.MaThamChieu not in adjustments_map:
+                    adjustments_map[phieu.MaThamChieu] = {
+                        'MaPhieuKiem': phieu.MaThamChieu,
+                        'NgayDieuChinh': phieu.NgayTao,
+                        'phieu_nhap': [],
+                        'phieu_xuat': []
+                    }
+                adjustments_map[phieu.MaThamChieu]['phieu_nhap'].append(phieu.to_dict())
+        
+        for phieu in phieu_xuat_list:
+            if phieu.MaThamChieu:
+                if phieu.MaThamChieu not in adjustments_map:
+                    adjustments_map[phieu.MaThamChieu] = {
+                        'MaPhieuKiem': phieu.MaThamChieu,
+                        'NgayDieuChinh': phieu.NgayTao,
+                        'phieu_nhap': [],
+                        'phieu_xuat': []
+                    }
+                adjustments_map[phieu.MaThamChieu]['phieu_xuat'].append(phieu.to_dict())
+        
+        result = list(adjustments_map.values())
+        
+        return success_response({
+            'adjustments': result,
+            'total': len(result)
+        })
+    except Exception as e:
+        return error_response(f"Error getting adjustment history: {str(e)}", 500)
 
 
 # =============================================
@@ -614,14 +841,4 @@ def discard_goods():
             'SoLuong': so_luong,
             'MaKho': batch.MaKho
         })
-    
-    # Record who created
-    tao_phieu = TaoPhieu(MaNV=claims['id'], MaPhieuTao=ma_phieu)
-    db.session.add(tao_phieu)
-    
-    db.session.commit()
-    
-    return success_response({
-        'phieu': phieu.to_dict(),
-        'discarded_items': discarded_items
-    }, message="Goods discarded successfully", status=201)
+   
