@@ -110,15 +110,6 @@ cp .env.example .env
 # - SECRET_KEY=your-secret-key
 # - JWT_SECRET_KEY=your-jwt-secret
 
-# Initialize Flask-Migrate
-flask db init
-
-# Create migration for password fields
-flask db migrate -m "Add MatKhau fields"
-
-# Apply migration to database
-flask db upgrade
-
 # Seed passwords for existing users
 python seed_passwords.py
 # Default password: 123456 for all users

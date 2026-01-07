@@ -19,7 +19,8 @@ CREATE TABLE ThuNgan (
     NgaySinh DATE,
     GioiTinh ENUM('Nam', 'Nữ', 'Khác'),
     SDT VARCHAR(15),
-    TaiKhoanNV VARCHAR(50) UNIQUE
+    TaiKhoanNV VARCHAR(50) UNIQUE,
+    MatKhau VARCHAR(250) DEFAULT '123'
 );
 
 -- Bảng Nhân Viên Kho
@@ -31,7 +32,8 @@ CREATE TABLE NhanVienKho (
     GioiTinh ENUM('Nam', 'Nữ', 'Khác'),
     SDT VARCHAR(15),
     TaiKhoanNV VARCHAR(50) UNIQUE,
-    Role ENUM('Nhân viên', 'Quản lý') DEFAULT 'Nhân viên'
+    Role ENUM('Nhân viên', 'Quản lý') DEFAULT 'Nhân viên',
+    MatKhau VARCHAR(250) DEFAULT '123'
 );
 
 -- =============================================

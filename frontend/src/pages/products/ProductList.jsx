@@ -21,7 +21,7 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
-import api from '@/lib/api';
+import api from '@/libs/api';
 
 export default function ProductList() {
     const { toast } = useToast();
