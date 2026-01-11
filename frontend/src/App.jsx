@@ -112,14 +112,6 @@ function App() {
                             </ProtectedRoute>
                         }
                     />
-                    <Route
-                        path="/orders/new"
-                        element={
-                            <ProtectedRoute allowedRoles={['Quản lý', 'Nhân viên']}>
-                                <OrderForm />
-                            </ProtectedRoute>
-                        }
-                    />
 
                     {/* UC03-UC05: Warehouse Operations */}
                     <Route

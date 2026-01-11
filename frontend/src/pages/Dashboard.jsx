@@ -54,7 +54,7 @@ export default function Dashboard() {
                         <>
                             <QuickAction href="/warehouse/import" title="Nhập kho" />
                             <QuickAction href="/warehouse/export" title="Xuất kho" />
-                            <QuickAction href="/orders/new" title="Đặt hàng NCC" />
+                            <QuickAction href="/orders" title="Đặt hàng NCC" />
                         </>
                     )}
                     {user?.Type === 'ThuNgan' && (
